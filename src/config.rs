@@ -25,6 +25,11 @@ pub struct Config {
     pub libre_url: String,
     pub libre_key: String,
 
+    /// Optional HTTP/SOCKS proxy for ALL backends, e.g.
+    /// "http://127.0.0.1:7890" or "socks5://127.0.0.1:7891". Empty = direct.
+    /// Needed to reach providers blocked on your network (e.g. Google).
+    pub proxy_url: String,
+
     pub font_size: f32,
 }
 
@@ -38,8 +43,11 @@ impl Default for Config {
             ai_base_url: "https://api.deepseek.com/v1".to_string(),
             ai_model: "deepseek-chat".to_string(),
             ai_key: String::new(),
-            libre_url: "https://libretranslate.com".to_string(),
+            // Public libretranslate.com now requires an API key; this mirror is
+            // free and keyless. Override per `libre_url` if you self-host.
+            libre_url: "https://translate.disroot.org".to_string(),
             libre_key: String::new(),
+            proxy_url: String::new(),
             font_size: 16.0,
         }
     }

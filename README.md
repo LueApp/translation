@@ -40,8 +40,37 @@ Configured in `~/.config/ai-translate/config.toml` (`provider = …`):
 - `ai` — **OpenAI-compatible** chat API (your key). Best quality. Works with
   domestic LLMs reachable in CN: DeepSeek, Moonshot/Kimi, Zhipu/GLM, Qwen
   (DashScope compatible-mode), Doubao/Volcano — and OpenAI itself.
-- `libre` — LibreTranslate (self-hosted or keyed public instance).
-- `google` — free Google endpoint (blocked behind the GFW).
+- `libre` — LibreTranslate. Defaults to the free, keyless mirror
+  `https://translate.disroot.org` (point `libre_url` at your own instance if you
+  self-host; `libretranslate.com` itself now requires an API key).
+- `google` — free Google endpoint. **Blocked behind the GFW** — only works if you
+  set `proxy_url` (see below) to route through a VPN/proxy.
+
+### Proxy (for blocked endpoints)
+
+To reach providers blocked on your network (e.g. Google), set a proxy that all
+backends route through. Three ways, in precedence order:
+
+1. **In-app** — click the **⚙** button in the popup, fill in **Proxy URL**, and
+   press **Save** (writes `config.toml`). Same panel also sets your AI key,
+   AI endpoint/model, and LibreTranslate URL — no file editing needed.
+2. **Config file** — set `proxy_url` in `~/.config/ai-translate/config.toml`:
+   ```toml
+   proxy_url = "http://127.0.0.1:7890"     # or socks5://127.0.0.1:7891
+   ```
+3. **Environment** — if `proxy_url` is empty, `HTTP_PROXY` / `HTTPS_PROXY` /
+   `ALL_PROXY` (and `NO_PROXY`) are honored automatically. Note: the hotkey
+   daemon (a systemd user service) won't see vars you only `export` in a shell,
+   so prefer #1 or #2 for the global-hotkey triggers.
+
+Leave `proxy_url` empty (`""`) for a direct connection.
+
+### Settings panel
+
+The **⚙** button in the popup opens an in-app editor for everything that isn't a
+per-translation choice — proxy, AI key/endpoint/model, LibreTranslate URL/key.
+Edits apply to the current session immediately; **Save** persists them to
+`~/.config/ai-translate/config.toml` for future launches.
 
 ### Enable AI (recommended)
 

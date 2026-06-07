@@ -9,6 +9,7 @@ pub struct TranslatorApp {
     result: String,
     status: String,
     auto_copy: bool,
+    show_settings: bool,
     pending: Option<Receiver<Result<String, String>>>,
 }
 
@@ -56,6 +57,7 @@ impl TranslatorApp {
             result: String::new(),
             status: String::new(),
             auto_copy,
+            show_settings: false,
             pending: None,
         };
         if auto && !app.input.trim().is_empty() {
@@ -131,6 +133,13 @@ impl eframe::App for TranslatorApp {
                             ui.selectable_value(&mut self.cfg.provider, p.to_string(), p);
                         }
                     });
+                if ui
+                    .button("⚙")
+                    .on_hover_text("Settings (proxy, AI key, endpoints)")
+                    .clicked()
+                {
+                    self.show_settings = !self.show_settings;
+                }
             });
             ui.add_space(4.0);
         });
@@ -195,8 +204,110 @@ impl eframe::App for TranslatorApp {
                 });
         });
 
+        if self.show_settings {
+            self.settings_window(&ctx);
+        }
+
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            // Escape closes the settings overlay first; only then the window.
+            if self.show_settings {
+                self.show_settings = false;
+            } else {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+}
+
+impl TranslatorApp {
+    /// Floating settings overlay: edit the config that's otherwise only in
+    /// ~/.config/ai-translate/config.toml. Edits apply to this session
+    /// immediately; **Save** persists them to disk for future launches.
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        let mut open = true;
+        egui::Window::new("Settings")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_max_width(420.0);
+                egui::Grid::new("settings_grid")
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        let field = 300.0;
+
+                        ui.label("Proxy URL");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.cfg.proxy_url)
+                                .desired_width(field)
+                                .hint_text("http://127.0.0.1:7890 · socks5://… · blank = direct"),
+                        );
+                        ui.end_row();
+
+                        ui.label("AI base URL");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.cfg.ai_base_url)
+                                .desired_width(field)
+                                .hint_text("https://api.deepseek.com/v1"),
+                        );
+                        ui.end_row();
+
+                        ui.label("AI model");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.cfg.ai_model)
+                                .desired_width(field)
+                                .hint_text("deepseek-chat"),
+                        );
+                        ui.end_row();
+
+                        ui.label("AI key");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.cfg.ai_key)
+                                .password(true)
+                                .desired_width(field)
+                                .hint_text("sk-…  (enables provider = ai)"),
+                        );
+                        ui.end_row();
+
+                        ui.label("LibreTranslate URL");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.cfg.libre_url)
+                                .desired_width(field)
+                                .hint_text("https://translate.disroot.org"),
+                        );
+                        ui.end_row();
+
+                        ui.label("LibreTranslate key");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.cfg.libre_key)
+                                .password(true)
+                                .desired_width(field)
+                                .hint_text("optional"),
+                        );
+                        ui.end_row();
+                    });
+
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        self.status = match self.cfg.save() {
+                            Ok(()) => "Settings saved".to_string(),
+                            Err(e) => format!("Save failed: {e}"),
+                        };
+                        self.show_settings = false;
+                    }
+                    if ui.button("Close").clicked() {
+                        self.show_settings = false;
+                    }
+                    ui.add_space(8.0);
+                    ui.weak("changes apply now · Save writes config.toml");
+                });
+            });
+        // Window's own [x] / titlebar close.
+        if !open {
+            self.show_settings = false;
         }
     }
 }

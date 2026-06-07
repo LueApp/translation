@@ -1,6 +1,27 @@
 use crate::config::Config;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
+use std::time::Duration;
+
+/// Shared HTTP agent for every backend. Honors an optional proxy (needed to
+/// reach providers blocked on this network, e.g. Google behind the GFW) and
+/// bounds connect/total time so an unreachable endpoint fails fast instead of
+/// hanging. `http_status_as_error(false)` lets each backend read 4xx/5xx
+/// bodies and surface the server's own message instead of a bare status code.
+fn http_agent(cfg: &Config) -> Result<ureq::Agent> {
+    let mut builder = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(8)))
+        .timeout_global(Some(Duration::from_secs(40)))
+        .http_status_as_error(false);
+    let proxy = cfg.proxy_url.trim();
+    if !proxy.is_empty() {
+        let p = ureq::Proxy::new(proxy).with_context(|| {
+            format!("invalid proxy_url '{proxy}' (use http://host:port or socks5://host:port)")
+        })?;
+        builder = builder.proxy(Some(p));
+    }
+    Ok(builder.build().into())
+}
 
 /// Translate `text` using the provider configured in `cfg`.
 pub fn translate(cfg: &Config, text: &str) -> Result<String> {
@@ -16,8 +37,9 @@ pub fn translate(cfg: &Config, text: &str) -> Result<String> {
         "ai" => ai_translate(cfg, text),
         "libre" => libretranslate(cfg, text),
         "google" => {
+            let agent = http_agent(cfg)?;
             let (src, tgt) = resolve_langs(cfg, text);
-            google_free(&src, &tgt, text)
+            google_free(&agent, &src, &tgt, text)
         }
         other => bail!("unknown provider '{}'", other),
     }
@@ -26,14 +48,16 @@ pub fn translate(cfg: &Config, text: &str) -> Result<String> {
 // ---------- MyMemory: free, no key (reachable in CN) ----------
 
 fn mymemory(cfg: &Config, text: &str) -> Result<String> {
+    let agent = http_agent(cfg)?;
     let (src, tgt) = resolve_langs(cfg, text);
     let langpair = format!("{src}|{tgt}");
     // MyMemory caps each request at 500 bytes — translate long text in chunks.
-    translate_chunked(text, 480, |chunk| mymemory_one(&langpair, chunk))
+    translate_chunked(text, 480, |chunk| mymemory_one(&agent, &langpair, chunk))
 }
 
-fn mymemory_one(langpair: &str, text: &str) -> Result<String> {
-    let mut res = ureq::get("https://api.mymemory.translated.net/get")
+fn mymemory_one(agent: &ureq::Agent, langpair: &str, text: &str) -> Result<String> {
+    let mut res = agent
+        .get("https://api.mymemory.translated.net/get")
         .query("q", text)
         .query("langpair", langpair)
         .call()
@@ -79,17 +103,22 @@ fn ai_translate(cfg: &Config, text: &str) -> Result<String> {
         "stream": false,
     });
     let auth = format!("Bearer {}", cfg.ai_key.trim());
-    let mut res = ureq::post(&url)
+    let agent = http_agent(cfg)?;
+    let mut res = agent
+        .post(&url)
         .header("Authorization", &auth)
         .header("Content-Type", "application/json")
         .send_json(&body)
         .with_context(|| format!("AI request to {url} failed"))?;
     let v: Value = res.body_mut().read_json().context("reading AI response")?;
-    let content = v
-        .pointer("/choices/0/message/content")
-        .and_then(|x| x.as_str())
-        .ok_or_else(|| anyhow!("unexpected AI response: {v}"))?;
-    Ok(content.trim().to_string())
+    match v.pointer("/choices/0/message/content").and_then(|x| x.as_str()) {
+        Some(content) => Ok(content.trim().to_string()),
+        // Surface the provider's own error (bad key, unknown model, …) clearly.
+        None => match v.pointer("/error/message").and_then(|x| x.as_str()) {
+            Some(msg) => bail!("AI provider error: {msg}"),
+            None => bail!("unexpected AI response: {v}"),
+        },
+    }
 }
 
 // ---------- LibreTranslate (self-hostable; public instance needs a key) ----------
@@ -106,7 +135,9 @@ fn libretranslate(cfg: &Config, text: &str) -> Result<String> {
     if !cfg.libre_key.is_empty() {
         body["api_key"] = Value::String(cfg.libre_key.clone());
     }
-    let mut res = ureq::post(&url)
+    let agent = http_agent(cfg)?;
+    let mut res = agent
+        .post(&url)
         .send_json(&body)
         .context("LibreTranslate request failed")?;
     let v: Value = res
@@ -121,20 +152,24 @@ fn libretranslate(cfg: &Config, text: &str) -> Result<String> {
 
 // ---------- Google unofficial (free, blocked behind the GFW) ----------
 
-fn google_free(sl: &str, tl: &str, text: &str) -> Result<String> {
+fn google_free(agent: &ureq::Agent, sl: &str, tl: &str, text: &str) -> Result<String> {
     // Keep each GET request's URL within bounds.
-    translate_chunked(text, 1500, |chunk| google_one(sl, tl, chunk))
+    translate_chunked(text, 1500, |chunk| google_one(agent, sl, tl, chunk))
 }
 
-fn google_one(sl: &str, tl: &str, text: &str) -> Result<String> {
-    let mut res = ureq::get("https://translate.googleapis.com/translate_a/single")
+fn google_one(agent: &ureq::Agent, sl: &str, tl: &str, text: &str) -> Result<String> {
+    let mut res = agent
+        .get("https://translate.googleapis.com/translate_a/single")
         .query("client", "gtx")
         .query("sl", sl)
         .query("tl", tl)
         .query("dt", "t")
         .query("q", text)
         .call()
-        .context("Google translate request failed (likely blocked on this network)")?;
+        .context(
+            "Google translate request failed — it's blocked on this network. \
+             Set `proxy_url` in config (e.g. http://127.0.0.1:7890) to route through a VPN/proxy.",
+        )?;
     let body = res.body_mut().read_to_string().context("reading Google response")?;
     let v: Value = serde_json::from_str(&body).context("parsing Google JSON")?;
     let segments = v
