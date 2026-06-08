@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Translate — native KDE/Wayland translator for Linux</title>
+  <meta name="description" content="A native, lightweight translation tool for Ubuntu/KDE. Translate the selection, a screen region (OCR), or typed text via a global hotkey — free by default, with optional AI backends for much better quality." />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#5b5bf0" />
+  <link rel="canonical" href="https://translate.lue-app.com/" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235b5bf0'/%3E%3Ctext x='12' y='17' font-size='13' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3E文%3C/text%3E%3C/svg%3E" />
+  <meta property="og:title" content="AI Translate — native KDE/Wayland translator" />
+  <meta property="og:description" content="Translate the selection, a screen region (OCR), or typed text via a global hotkey. Native Rust app for Ubuntu/KDE. Free default engine, optional AI backends." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://translate.lue-app.com/" />
+  <script>
+    /* Set language before first paint to avoid an English flash for zh visitors. */
+    (function () {
+      try {
+        var s = localStorage.getItem("ai-translate-lang");
+        var l = (s === "en" || s === "zh") ? s
+          : ((navigator.language || "en").toLowerCase().indexOf("zh") === 0 ? "zh" : "en");
+        document.documentElement.dataset.lang = l;
+        document.documentElement.lang = l === "zh" ? "zh-CN" : "en";
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- ============================== top bar ============================== -->
+  <header class="topbar">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="AI Translate home">
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h7"/><path d="M9 3v2c0 4-2 7-5 9"/><path d="M5 9c0 2.5 2.5 4.5 6 5"/><path d="M14 19l3.5-9 3.5 9"/><path d="M15.2 16h4.6"/></svg>
+        </span>
+        <span class="brand-text">
+          <span class="brand-name">AI Translate</span>
+          <span class="brand-sub"><span class="lang-en">native KDE translator</span><span class="lang-zh">原生 KDE 翻译工具</span></span>
+        </span>
+      </a>
+      <nav class="nav">
+        <a class="nav-hide" href="#features"><span class="lang-en">Features</span><span class="lang-zh">功能</span></a>
+        <a class="nav-hide" href="#backends"><span class="lang-en">Backends</span><span class="lang-zh">引擎</span></a>
+        <a href="#install"><span class="lang-en">Install</span><span class="lang-zh">安装</span></a>
+        <a class="nav-hide" href="https://github.com/LueApp/translation" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <button id="lang-toggle" class="btn ghost sm lang-btn" type="button" aria-label="Switch language">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18"/></svg>
+          <span class="lang-en">中文</span><span class="lang-zh">EN</span>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============================== hero ============================== -->
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="dot"></span><span class="lang-en">Linux · KDE Plasma 6 · Wayland</span><span class="lang-zh">Linux · KDE Plasma 6 · Wayland</span></p>
+          <h1>
+            <span class="lang-en">Translate anything on screen — <span class="grad">without leaving the app.</span></span>
+            <span class="lang-zh">翻译屏幕上的任何文字，<span class="grad">无需切换窗口。</span></span>
+          </h1>
+          <p class="lead">
+            <span class="lang-en">A native, lightweight translator for Ubuntu/KDE. Hit a global hotkey to translate the <b>selection</b>, a <b>screen region (OCR)</b>, or <b>typed text</b> — the result pops up <b>right at your cursor</b> and lands on the clipboard. Free by default; plug in an AI model for much better quality.</span>
+            <span class="lang-zh">一款面向 Ubuntu/KDE 的原生轻量翻译工具。按下全局快捷键，即可翻译<b>选中文字</b>、<b>屏幕区域（OCR）</b>或<b>手动输入</b>的文本——结果直接弹在<b>鼠标位置</b>并复制到剪贴板。默认免费；接入 AI 模型可获得更高质量。</span>
+          </p>
+          <div class="cta-row">
+            <a class="btn primary" href="/downloads/ai-translate-0.1.0-x86_64-linux.tar.gz" download>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>
+              <span class="lang-en">Download for Linux</span><span class="lang-zh">下载 Linux 版</span>
+            </a>
+            <a class="btn" href="#install">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 6-5 6 5 6"/><path d="m16 6 5 6-5 6"/></svg>
+              <span class="lang-en">Build from source</span><span class="lang-zh">从源码构建</span>
+            </a>
+          </div>
+          <div class="dl-meta">
+            <span class="pill"><b>v0.1.0</b></span>
+            <span class="pill">x86_64</span>
+            <span class="pill"><span class="lang-en">6.6&nbsp;MB · tar.gz</span><span class="lang-zh">6.6&nbsp;MB · tar.gz</span></span>
+            <span class="sha" title="SHA-256 of the tarball">
+              <span class="lang-en">sha256</span><span class="lang-zh">sha256</span>
+              <code id="sha">0c272093…e018bc66</code>
+              <button id="copy-sha" class="btn ghost sm" type="button" data-full="0c27209314c2d548083122dd4256be04ac28d0d6537eda3fd1477187e018bc66" aria-label="Copy full checksum">copy</button>
+            </span>
+          </div>
+        </div>
+
+        <div class="hero-side" aria-hidden="false">
+          <div class="window">
+            <div class="window-bar">
+              <span class="dots"><i></i><i></i><i></i></span>
+              <span class="title">AI Translate</span>
+            </div>
+            <div class="window-body">
+              <div class="trig" data-accent="indigo">
+                <span class="ic"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h13v2"/><path d="M10.5 5v12"/><path d="M8 17h5"/><path d="m16 13 4 8"/><path d="m20 13-4 8"/><path d="M15.2 18h5.6"/></svg></span>
+                <span class="t-body">
+                  <span class="t-name"><span class="lang-en">Translate selection</span><span class="lang-zh">翻译选中</span></span>
+                  <span class="t-desc"><span class="lang-en">copy-free read, result at cursor</span><span class="lang-zh">免复制读取，结果弹在光标处</span></span>
+                </span>
+                <span class="t-key"><kbd>Meta</kbd> <kbd>E</kbd></span>
+              </div>
+              <div class="trig" data-accent="violet">
+                <span class="ic"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="7" y="8" width="10" height="8" rx="1.5"/></svg></span>
+                <span class="t-body">
+                  <span class="t-name"><span class="lang-en">Capture &amp; OCR</span><span class="lang-zh">截图 OCR</span></span>
+                  <span class="t-desc"><span class="lang-en">drag a region → Tesseract → translate</span><span class="lang-zh">框选区域 → Tesseract → 翻译</span></span>
+                </span>
+                <span class="t-key"><kbd>Meta</kbd> <kbd>R</kbd></span>
+              </div>
+              <div class="trig" data-accent="blue">
+                <span class="ic"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-8l-4 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z"/></svg></span>
+                <span class="t-body">
+                  <span class="t-name"><span class="lang-en">Type / paste popup</span><span class="lang-zh">输入/粘贴弹窗</span></span>
+                  <span class="t-desc"><span class="lang-en">a quick box at the cursor</span><span class="lang-zh">在光标处弹出输入框</span></span>
+                </span>
+                <span class="t-key"><kbd>Meta</kbd> <kbd>T</kbd></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== features ============================== -->
+    <section class="block" id="features">
+      <div class="wrap">
+        <div class="sec-head">
+          <p class="kicker"><span class="lang-en">Why it's different</span><span class="lang-zh">有何不同</span></p>
+          <h2><span class="lang-en">Built native, for the desktop you actually use.</span><span class="lang-zh">为你真正在用的桌面而生的原生工具。</span></h2>
+          <p><span class="lang-en">Rust + egui — no embedded browser, no Electron. Tested on Ubuntu 26.04 / KDE Plasma 6 (Wayland).</span><span class="lang-zh">Rust + egui 编写——没有内嵌浏览器，没有 Electron。已在 Ubuntu 26.04 / KDE Plasma 6（Wayland）上测试。</span></p>
+        </div>
+        <div class="grid cols-3">
+          <article class="card" data-accent="indigo">
+            <span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg></span>
+            <h3><span class="lang-en">Lightweight &amp; fast</span><span class="lang-zh">轻量又快速</span></h3>
+            <p><span class="lang-en">A single ~16 MB Rust binary with a tiny GUI. No webkit, no runtime to install — it starts instantly.</span><span class="lang-zh">单个约 16 MB 的 Rust 二进制，带极简 GUI。无 webkit、无需运行时——秒级启动。</span></p>
+          </article>
+          <article class="card" data-accent="violet">
+            <span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="M5 10a7 7 0 0 1 14 0v4l1.5 3h-17L5 14z"/><circle cx="12" cy="20" r="1.5"/></svg></span>
+            <h3><span class="lang-en">Window at your cursor</span><span class="lang-zh">弹窗跟随光标</span></h3>
+            <p><span class="lang-en">A KWin script + window rule place the result window exactly at the mouse, clamped to the right monitor — the one thing daemons can't do on Wayland alone.</span><span class="lang-zh">通过 KWin 脚本 + 窗口规则，把结果窗口精确放到鼠标位置并限制在当前显示器——这是 Wayland 后台程序单凭自身做不到的。</span></p>
+          </article>
+          <article class="card" data-accent="blue">
+            <span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="4" width="12" height="14" rx="2"/><path d="M16 4V2H6a2 2 0 0 0-2 2v12"/></svg></span>
+            <h3><span class="lang-en">Copy-free selection</span><span class="lang-zh">免复制取词</span></h3>
+            <p><span class="lang-en">On KDE Wayland it reads the highlighted text directly (PRIMARY via <code>ext-data-control</code>) — no fake Ctrl+C. The result is copied to the clipboard as a fallback.</span><span class="lang-zh">在 KDE Wayland 上直接读取高亮文本（通过 <code>ext-data-control</code> 读 PRIMARY）——无需模拟 Ctrl+C。结果也会复制到剪贴板作为兜底。</span></p>
+          </article>
+          <article class="card" data-accent="green">
+            <span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v6"/><path d="M12 3 9 6"/><path d="m12 3 3 3"/><rect x="4" y="9" width="16" height="11" rx="2"/></svg></span>
+            <h3><span class="lang-en">Free by default</span><span class="lang-zh">默认免费</span></h3>
+            <p><span class="lang-en">Ships with a free, keyless engine (MyMemory). Nothing to sign up for — install and it just translates.</span><span class="lang-zh">内置免费、无需密钥的引擎（MyMemory）。无需注册——装好即可翻译。</span></p>
+          </article>
+          <article class="card" data-accent="amber">
+            <span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg></span>
+            <h3><span class="lang-en">AI backends, your key</span><span class="lang-zh">AI 引擎，自带密钥</span></h3>
+            <p><span class="lang-en">Point it at any OpenAI-compatible API for far better translations — DeepSeek, Kimi, GLM, Qwen, Doubao, or OpenAI itself.</span><span class="lang-zh">接入任意 OpenAI 兼容 API，获得明显更好的译文——DeepSeek、Kimi、GLM、通义千问、豆包，或 OpenAI 本身。</span></p>
+          </article>
+          <article class="card" data-accent="teal">
+            <span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18"/><path d="M3 12h18"/><path d="M8 8h8M8 16h8"/></svg></span>
+            <h3><span class="lang-en">Works behind the GFW</span><span class="lang-zh">可在墙内使用</span></h3>
+            <p><span class="lang-en">Domestic LLM endpoints work directly. Need a blocked provider (e.g. Google)? Set a proxy in the settings panel and every backend routes through it.</span><span class="lang-zh">国内大模型端点可直连。需要被墙的服务（如 Google）？在设置面板里填一个代理，所有引擎都会走它。</span></p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== backends ============================== -->
+    <section class="block" id="backends">
+      <div class="wrap">
+        <div class="sec-head">
+          <p class="kicker"><span class="lang-en">Translation engines</span><span class="lang-zh">翻译引擎</span></p>
+          <h2><span class="lang-en">Pick the trade-off you want.</span><span class="lang-zh">按需取舍。</span></h2>
+          <p><span class="lang-en">Set <code>provider</code> in the config — or just use the in-app settings panel.</span><span class="lang-zh">在配置里设置 <code>provider</code>——或直接用应用内的设置面板。</span></p>
+        </div>
+        <div class="table-card">
+          <div class="tbl-scroll">
+            <table class="t">
+              <thead>
+                <tr>
+                  <th>provider</th>
+                  <th><span class="lang-en">What it is</span><span class="lang-zh">说明</span></th>
+                  <th><span class="lang-en">Key?</span><span class="lang-zh">密钥</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>mymemory</code> <span class="tag free"><span class="lang-en">default</span><span class="lang-zh">默认</span></span></td>
+                  <td><span class="lang-en">Free public engine. Decent, a bit literal.</span><span class="lang-zh">免费公共引擎，够用但偏直译。</span></td>
+                  <td><span class="lang-en">No</span><span class="lang-zh">无需</span></td>
+                </tr>
+                <tr>
+                  <td><code>ai</code> <span class="tag best"><span class="lang-en">best quality</span><span class="lang-zh">质量最佳</span></span></td>
+                  <td><span class="lang-en">Any OpenAI-compatible chat API. DeepSeek / Kimi / GLM / Qwen / Doubao / OpenAI.</span><span class="lang-zh">任意 OpenAI 兼容对话 API。DeepSeek / Kimi / GLM / 通义千问 / 豆包 / OpenAI。</span></td>
+                  <td><span class="lang-en">Your key</span><span class="lang-zh">自带</span></td>
+                </tr>
+                <tr>
+                  <td><code>libre</code></td>
+                  <td><span class="lang-en">LibreTranslate. Free keyless mirror by default; point at your own instance to self-host.</span><span class="lang-zh">LibreTranslate。默认用免费无密钥镜像；可指向自建实例。</span></td>
+                  <td><span class="lang-en">Optional</span><span class="lang-zh">可选</span></td>
+                </tr>
+                <tr>
+                  <td><code>google</code> <span class="tag gfw"><span class="lang-en">needs proxy in CN</span><span class="lang-zh">墙内需代理</span></span></td>
+                  <td><span class="lang-en">Free Google endpoint. Blocked behind the GFW unless you set a proxy.</span><span class="lang-zh">免费 Google 端点。墙内需设置代理方可使用。</span></td>
+                  <td><span class="lang-en">No</span><span class="lang-zh">无需</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="sec-head" style="margin-top:32px;margin-bottom:16px">
+          <h2 style="font-size:1.2rem"><span class="lang-en">AI provider presets</span><span class="lang-zh">AI 服务商预设</span></h2>
+          <p class="small"><span class="lang-en">Drop the base URL + model into the settings panel (or config), add your key, set <code>provider = "ai"</code>.</span><span class="lang-zh">把 base URL + 模型填进设置面板（或配置文件），加上密钥，设置 <code>provider = "ai"</code>。</span></p>
+        </div>
+        <div class="table-card">
+          <div class="tbl-scroll">
+            <table class="t">
+              <thead>
+                <tr><th><span class="lang-en">Provider</span><span class="lang-zh">服务商</span></th><th>ai_base_url</th><th>ai_model</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>DeepSeek</td><td><code>https://api.deepseek.com/v1</code></td><td><code>deepseek-chat</code></td></tr>
+                <tr><td>Moonshot (Kimi)</td><td><code>https://api.moonshot.cn/v1</code></td><td><code>moonshot-v1-8k</code></td></tr>
+                <tr><td>Zhipu (GLM)</td><td><code>https://open.bigmodel.cn/api/paas/v4</code></td><td><code>glm-4-flash</code></td></tr>
+                <tr><td>Qwen (DashScope)</td><td><code>https://dashscope.aliyuncs.com/compatible-mode/v1</code></td><td><code>qwen-plus</code></td></tr>
+                <tr><td>OpenAI</td><td><code>https://api.openai.com/v1</code></td><td><code>gpt-4o-mini</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== install ============================== -->
+    <section class="block" id="install">
+      <div class="wrap">
+        <div class="sec-head">
+          <p class="kicker"><span class="lang-en">Get started</span><span class="lang-zh">开始使用</span></p>
+          <h2><span class="lang-en">Install in under a minute.</span><span class="lang-zh">一分钟内装好。</span></h2>
+          <p><span class="lang-en">Download the tarball and run the installer — it sets up the binary, the global-hotkey daemon, and an app-menu entry. Everything lands in your home directory; no sudo required.</span><span class="lang-zh">下载压缩包并运行安装脚本——它会装好二进制、全局快捷键后台服务和应用菜单项。全部安装在用户目录，无需 sudo。</span></p>
+        </div>
+
+        <div class="steps">
+          <div class="step">
+            <div class="step-head"><span class="step-num">1</span><h3><span class="lang-en">Download &amp; install</span><span class="lang-zh">下载并安装</span></h3></div>
+            <div class="code">
+              <button class="copy" type="button" aria-label="Copy download &amp; install commands">copy</button>
+<pre><code><span class="c-comment"># grab the release and unpack it</span>
+curl -LO https://translate.lue-app.com/downloads/ai-translate-0.1.0-x86_64-linux.tar.gz
+tar -xzf ai-translate-0.1.0-x86_64-linux.tar.gz
+cd ai-translate-0.1.0-x86_64-linux
+
+<span class="c-comment"># installs binary + hotkey service + app-menu entry (no sudo)</span>
+./install.sh</code></pre>
+            </div>
+            <p class="muted small"><span class="lang-en">Re-run any time to update. <code>./install.sh --uninstall</code> removes it; your config is left untouched.</span><span class="lang-zh">随时重跑即可更新。<code>./install.sh --uninstall</code> 卸载，且保留你的配置。</span></p>
+          </div>
+
+          <div class="step">
+            <div class="step-head"><span class="step-num">2</span><h3><span class="lang-en">Install the runtime tools</span><span class="lang-zh">安装运行依赖</span></h3></div>
+            <div class="code">
+              <button class="copy" type="button" aria-label="Copy apt dependency install command">copy</button>
+<pre><code><span class="c-comment"># selection read, region capture, OCR, notifications</span>
+sudo apt install wl-clipboard xclip kde-spectacle \
+  tesseract-ocr libnotify-bin qdbus-qt6
+
+<span class="c-comment"># extra OCR languages (optional)</span>
+sudo apt install tesseract-ocr-chi-sim tesseract-ocr-jpn</code></pre>
+            </div>
+            <p class="muted small"><span class="lang-en">Most are already present on a KDE install. Add OCR language packs, then set <code>ocr_langs = "eng+chi_sim"</code>.</span><span class="lang-zh">KDE 环境大多已自带。装好 OCR 语言包后，设置 <code>ocr_langs = "eng+chi_sim"</code>。</span></p>
+          </div>
+
+          <div class="step">
+            <div class="step-head"><span class="step-num">3</span><h3><span class="lang-en">Use the hotkeys</span><span class="lang-zh">使用快捷键</span></h3></div>
+            <div class="card" style="box-shadow:none">
+              <p class="muted small" style="margin-bottom:12px"><span class="lang-en">Auto-assigned to the first free key via KDE's KGlobalAccel (preferred keys below) — your exact keys may differ; see / rebind them in System Settings → Shortcuts (component "AI Translate").</span><span class="lang-zh">通过 KDE 的 KGlobalAccel 自动绑定到第一个空闲按键（下列为首选键）——你的实际按键可能不同；可在 系统设置 → 快捷键（组件 “AI Translate”）中查看/重新绑定。</span></p>
+              <p style="margin:0 0 8px"><kbd>Meta</kbd> + <kbd>E</kbd> &nbsp;<span class="muted small"><span class="lang-en">translate selection</span><span class="lang-zh">翻译选中</span></span></p>
+              <p style="margin:0 0 8px"><kbd>Meta</kbd> + <kbd>R</kbd> &nbsp;<span class="muted small"><span class="lang-en">capture region, OCR, translate</span><span class="lang-zh">框选区域、OCR、翻译</span></span></p>
+              <p style="margin:0"><kbd>Meta</kbd> + <kbd>T</kbd> &nbsp;<span class="muted small"><span class="lang-en">type / paste popup</span><span class="lang-zh">输入/粘贴弹窗</span></span></p>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-head"><span class="step-num">4</span><h3><span class="lang-en">Manage the service</span><span class="lang-zh">管理服务</span></h3></div>
+            <div class="code">
+              <button class="copy" type="button" aria-label="Copy service management commands">copy</button>
+<pre><code>systemctl --user status app-io.github.lue.AiTranslate.service
+systemctl --user restart app-io.github.lue.AiTranslate.service</code></pre>
+            </div>
+            <p class="muted small"><span class="lang-en">The hotkey daemon runs as a systemd <em>user</em> service and starts at login.</span><span class="lang-zh">快捷键后台以 systemd <em>用户</em>服务运行，登录时自动启动。</span></p>
+          </div>
+        </div>
+
+        <div class="note">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11 12h1v4h1"/></svg>
+          <p>
+            <span class="lang-en"><b>Prefer to build it yourself?</b> Clone the repo and <code>cargo build --release</code>, then <code>install -m755 target/release/ai-translate ~/.local/bin/</code>. Full instructions are in the <a href="https://github.com/LueApp/translation" target="_blank" rel="noopener noreferrer">README</a>.</span>
+            <span class="lang-zh"><b>想自己编译？</b> 克隆仓库并执行 <code>cargo build --release</code>，再 <code>install -m755 target/release/ai-translate ~/.local/bin/</code>。完整说明见 <a href="https://github.com/LueApp/translation" target="_blank" rel="noopener noreferrer">README</a>。</span>
+          </p>
+        </div>
+
+        <div class="callout">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.8 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.8a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          <p>
+            <span class="lang-en"><b>Linux x86_64 / KDE Plasma 6 (Wayland) only.</b> This MVP targets KDE; GNOME and X11 are on the roadmap (see <code>DESIGN.md</code>). The binary is dynamically linked against glibc — built and tested on Ubuntu 26.04.</span>
+            <span class="lang-zh"><b>仅支持 Linux x86_64 / KDE Plasma 6（Wayland）。</b> 此 MVP 面向 KDE；GNOME 与 X11 在规划中（见 <code>DESIGN.md</code>）。二进制动态链接 glibc——在 Ubuntu 26.04 上构建并测试。</span>
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== web2local ============================== -->
+    <section class="block" id="web2local">
+      <div class="wrap">
+        <div class="sec-head">
+          <p class="kicker"><span class="lang-en">No terminal needed</span><span class="lang-zh">无需终端</span></p>
+          <h2><span class="lang-en">Install &amp; run straight from this page</span><span class="lang-zh">直接从本页安装与运行</span></h2>
+          <p><span class="lang-en">If you run <a href="https://web2local-bridge.lue-app.com" target="_blank" rel="noopener noreferrer">web2local</a> — a tiny local daemon that lets an allowlisted site start commands with your approval — this page can install AI Translate and trigger translations for you. Every command is shown in a native dialog before it runs, and the daemon listens on loopback only.</span><span class="lang-zh">如果你运行 <a href="https://web2local-bridge.lue-app.com" target="_blank" rel="noopener noreferrer">web2local</a>——一个让已授权网站在你确认后启动命令的本地小守护进程——本页就能为你安装 AI Translate 并触发翻译。每条命令都会先在原生弹窗中显示、确认后才执行；守护进程仅监听本地回环。</span></p>
+        </div>
+
+        <div class="w2l-bar">
+          <span id="w2l-badge" class="w2l-badge" data-state="checking"><span class="w2l-dot"></span><span id="w2l-badge-text">checking…</span></span>
+          <label class="w2l-port"><span class="lang-en">port</span><span class="lang-zh">端口</span>
+            <input id="w2l-port" type="number" min="1" max="65535" step="1" inputmode="numeric" value="7878" />
+          </label>
+          <button id="w2l-recheck" class="btn sm" type="button"><span class="lang-en">Check</span><span class="lang-zh">检测</span></button>
+        </div>
+
+        <div class="grid cols-2">
+          <article class="card" data-accent="indigo">
+            <span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg></span>
+            <h3><span class="lang-en">Install without a terminal</span><span class="lang-zh">无需终端安装</span></h3>
+            <p><span class="lang-en">Hands web2local the install script with its SHA-256. You approve the full source in a dialog; it then downloads, verifies, and installs — binary, hotkey service, and app-menu entry.</span><span class="lang-zh">把安装脚本连同其 SHA-256 交给 web2local。你在弹窗中确认完整源码后，它会下载、校验并安装——二进制、快捷键服务和应用菜单项。</span></p>
+            <div class="w2l-actions">
+              <button id="w2l-install" class="btn primary" type="button" disabled><span class="lang-en">Install AI Translate</span><span class="lang-zh">安装 AI Translate</span></button>
+              <button id="w2l-install-stop" class="btn sm" type="button" hidden><span class="lang-en">Stop</span><span class="lang-zh">停止</span></button>
+            </div>
+            <p id="w2l-install-msg" class="muted small"></p>
+            <pre id="w2l-install-log" class="w2l-out" hidden></pre>
+          </article>
+
+          <article class="card" data-accent="violet">
+            <span class="ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 6-5 6 5 6"/><path d="m16 6 5 6-5 6"/></svg></span>
+            <h3><span class="lang-en">Try it from the browser</span><span class="lang-zh">在浏览器里试用</span></h3>
+            <p><span class="lang-en">Already installed? Trigger the app from here (it must be on web2local's PATH). Each click asks for approval.</span><span class="lang-zh">已经安装了？直接从这里触发（需在 web2local 的 PATH 中）。每次点击都需确认。</span></p>
+            <div class="w2l-actions">
+              <button class="btn" type="button" data-w2l-spawn="selection" disabled><span class="lang-en">Translate selection</span><span class="lang-zh">翻译选中</span></button>
+              <button class="btn" type="button" data-w2l-spawn="ocr" disabled><span class="lang-en">Capture &amp; OCR</span><span class="lang-zh">截图 OCR</span></button>
+              <button class="btn" type="button" data-w2l-spawn="popup" disabled><span class="lang-en">Open popup</span><span class="lang-zh">打开弹窗</span></button>
+            </div>
+            <div class="w2l-translate">
+              <input id="w2l-text" type="text" />
+              <button id="w2l-text-go" class="btn primary sm" type="button" disabled><span class="lang-en">Translate</span><span class="lang-zh">翻译</span></button>
+            </div>
+            <pre id="w2l-out" class="w2l-out" hidden></pre>
+          </article>
+        </div>
+
+        <div class="note">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <p><span class="lang-en">On detect, web2local adds this site's origin to its <b>graylist</b>, so every action asks for your approval first — nothing runs silently. No web2local? <a href="https://web2local-bridge.lue-app.com" target="_blank" rel="noopener noreferrer">Install it</a>, or just use the terminal steps above.</span><span class="lang-zh">检测到后，web2local 会把本站源加入其<b>灰名单</b>，因此每个操作都会先请求你确认——不会静默执行。没有 web2local？<a href="https://web2local-bridge.lue-app.com" target="_blank" rel="noopener noreferrer">点此安装</a>，或直接使用上方的终端步骤。</span></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== configure ============================== -->
+    <section class="block" id="configure">
+      <div class="wrap">
+        <div class="sec-head">
+          <p class="kicker"><span class="lang-en">Configure</span><span class="lang-zh">配置</span></p>
+          <h2><span class="lang-en">Enable AI in three lines.</span><span class="lang-zh">三行启用 AI。</span></h2>
+          <p><span class="lang-en">Click the <b>⚙</b> in the popup to edit everything without touching files — or edit <code>~/.config/ai-translate/config.toml</code> directly.</span><span class="lang-zh">点击弹窗里的 <b>⚙</b> 即可无需改文件地编辑一切——或直接编辑 <code>~/.config/ai-translate/config.toml</code>。</span></p>
+        </div>
+        <div class="grid cols-2">
+          <div>
+            <h3 style="font-size:1.02rem;margin:0 0 10px"><span class="lang-en">Best quality (recommended)</span><span class="lang-zh">最佳质量（推荐）</span></h3>
+            <div class="code">
+              <button class="copy" type="button" aria-label="Copy AI provider config">copy</button>
+<pre><code><span class="c-key">provider</span>     = <span class="c-str">"ai"</span>
+<span class="c-key">ai_base_url</span>  = <span class="c-str">"https://api.deepseek.com/v1"</span>
+<span class="c-key">ai_model</span>     = <span class="c-str">"deepseek-chat"</span>
+<span class="c-key">ai_key</span>       = <span class="c-str">"sk-..."</span>
+<span class="c-key">target_lang</span>  = <span class="c-str">"zh-CN"</span></code></pre>
+            </div>
+            <p class="muted small"><span class="lang-en"><code>source_lang = "auto"</code> detects the language; if the text is already in your target it flips to English, so selection-translate always does something useful.</span><span class="lang-zh"><code>source_lang = "auto"</code> 自动识别语言；若文本已是目标语言则切到英文，确保“翻译选中”总有结果。</span></p>
+          </div>
+          <div>
+            <h3 style="font-size:1.02rem;margin:0 0 10px"><span class="lang-en">Proxy for blocked endpoints</span><span class="lang-zh">为被墙端点设代理</span></h3>
+            <div class="code">
+              <button class="copy" type="button" aria-label="Copy proxy config">copy</button>
+<pre><code><span class="c-comment"># http or socks5; empty = direct</span>
+<span class="c-key">proxy_url</span> = <span class="c-str">"http://127.0.0.1:7890"</span>
+<span class="c-comment"># or: "socks5://127.0.0.1:7891"</span></code></pre>
+            </div>
+            <p class="muted small"><span class="lang-en">All backends route through it. Set it in the <b>⚙</b> panel so the hotkey daemon picks it up (it won't see shell <code>HTTP_PROXY</code> vars). Leave empty for a direct connection.</span><span class="lang-zh">所有引擎都会走它。请在 <b>⚙</b> 面板里设置，这样快捷键后台才能读到（它看不到 shell 里的 <code>HTTP_PROXY</code>）。留空则直连。</span></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== download band ============================== -->
+    <section class="block dl-band" id="download">
+      <div class="wrap">
+        <div class="card">
+          <div class="lead-txt">
+            <h3><span class="lang-en">Get AI Translate</span><span class="lang-zh">获取 AI Translate</span></h3>
+            <p><span class="lang-en">v0.1.0 · x86_64 Linux · 6.6&nbsp;MB · KDE Plasma 6 (Wayland)</span><span class="lang-zh">v0.1.0 · x86_64 Linux · 6.6&nbsp;MB · KDE Plasma 6（Wayland）</span></p>
+          </div>
+          <div class="cta-row">
+            <a class="btn primary" href="/downloads/ai-translate-0.1.0-x86_64-linux.tar.gz" download>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>
+              <span class="lang-en">Download .tar.gz</span><span class="lang-zh">下载 .tar.gz</span>
+            </a>
+            <a class="btn" href="/downloads/ai-translate-0.1.0-x86_64-linux.tar.gz.sha256"><span class="lang-en">checksum</span><span class="lang-zh">校验和</span></a>
+            <a class="btn ghost" href="https://github.com/LueApp/translation" target="_blank" rel="noopener noreferrer">GitHub</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============================== footer ============================== -->
+  <footer class="foot">
+    <div class="wrap">
+      <div class="f-brand">
+        <span class="logo" style="width:30px;height:30px;border-radius:9px" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h7"/><path d="M9 3v2c0 4-2 7-5 9"/><path d="M5 9c0 2.5 2.5 4.5 6 5"/><path d="M14 19l3.5-9 3.5 9"/><path d="M15.2 16h4.6"/></svg>
+        </span>
+        <span><span class="lang-en">AI Translate · built with Rust + egui</span><span class="lang-zh">AI Translate · 用 Rust + egui 构建</span></span>
+      </div>
+      <nav class="f-links">
+        <a href="#features"><span class="lang-en">Features</span><span class="lang-zh">功能</span></a>
+        <a href="#install"><span class="lang-en">Install</span><span class="lang-zh">安装</span></a>
+        <a href="/downloads/ai-translate-0.1.0-x86_64-linux.tar.gz" download><span class="lang-en">Download</span><span class="lang-zh">下载</span></a>
+        <a href="https://github.com/LueApp/translation" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script src="/web2local-client.js"></script>
+  <script src="/web2local.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

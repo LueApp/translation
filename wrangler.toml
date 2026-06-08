@@ -1,0 +1,8 @@
+# Cloudflare deploy for the AI Translate landing page.
+# Serves the static `site/` directory (page + downloads) as Worker assets.
+#   npx wrangler deploy
+name = "ai-translate"
+compatibility_date = "2026-05-01"
+
+[assets]
+directory = "./site"
