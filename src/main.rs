@@ -52,8 +52,11 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Text { text } => {
-            let out = translate::translate(&cfg, &text.join(" "))?;
-            println!("{out}");
+            let translation = translate::translate_with_warning(&cfg, &text.join(" "))?;
+            if let Some(warning) = translation.warning {
+                eprintln!("Warning: {warning}");
+            }
+            println!("{}", translation.text);
             Ok(())
         }
         Cmd::Daemon => {

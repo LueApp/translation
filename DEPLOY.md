@@ -14,8 +14,8 @@ site/
 ├── web2local.js                                 # "install / run from the page" logic
 ├── _headers                                     # security + caching + download headers
 └── downloads/
-    ├── ai-translate-0.1.0-x86_64-linux.tar.gz          # the download (6.6 MB)
-    ├── ai-translate-0.1.0-x86_64-linux.tar.gz.sha256   # checksum
+    ├── ai-translate-0.1.1-x86_64-linux.tar.gz          # the download (6.6 MB)
+    ├── ai-translate-0.1.1-x86_64-linux.tar.gz.sha256   # checksum
     ├── install.sh                                       # standalone installer
     └── install-remote.sh                                # download+verify+install (used by web2local)
 ```
@@ -102,14 +102,14 @@ Either way, attach the domain:
 curl -sI https://translate.lue-app.com/ | grep -i '200\|content-type'
 
 # download is served with the right headers (attachment + immutable cache)
-curl -sI https://translate.lue-app.com/downloads/ai-translate-0.1.0-x86_64-linux.tar.gz \
+curl -sI https://translate.lue-app.com/downloads/ai-translate-0.1.1-x86_64-linux.tar.gz \
   | grep -iE 'content-type|content-disposition|cache-control'
 
 # checksum matches what's on the page
-curl -sL https://translate.lue-app.com/downloads/ai-translate-0.1.0-x86_64-linux.tar.gz -o /tmp/ait.tar.gz
-curl -sL https://translate.lue-app.com/downloads/ai-translate-0.1.0-x86_64-linux.tar.gz.sha256
+curl -sL https://translate.lue-app.com/downloads/ai-translate-0.1.1-x86_64-linux.tar.gz -o /tmp/ait.tar.gz
+curl -sL https://translate.lue-app.com/downloads/ai-translate-0.1.1-x86_64-linux.tar.gz.sha256
 sha256sum /tmp/ait.tar.gz
-# expected: 0c27209314c2d548083122dd4256be04ac28d0d6537eda3fd1477187e018bc66
+# expected: 5c2d1dedd1880454e77eea84135c968c9f7de3845396009ec8c4fe8db5d5b4bd
 ```
 
 Open the page, toggle **中文 / EN**, and click **Download for Linux** — it should
@@ -126,7 +126,7 @@ cd /home/lue/boring/translation
 VER=0.2.0                      # new version
 PKG="ai-translate-${VER}-x86_64-linux"
 
-# stage + strip + package (mirror of how 0.1.0 was built)
+# stage + strip + package (mirror of how 0.1.1 was built)
 rm -rf "/tmp/$PKG" && mkdir -p "/tmp/$PKG"
 cp target/release/ai-translate "/tmp/$PKG/ai-translate" && strip "/tmp/$PKG/ai-translate"
 cp site/downloads/install.sh "/tmp/$PKG/install.sh"

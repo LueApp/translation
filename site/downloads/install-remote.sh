@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-VER="0.1.0"
+VER="0.1.1"
 BASE="https://translate.lue-app.com/downloads"
 PKG="ai-translate-${VER}-x86_64-linux"
 

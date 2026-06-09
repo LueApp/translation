@@ -3,6 +3,13 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
 use std::time::Duration;
 
+const AI_FALLBACK_WARNING: &str = "AI key is empty; used MyMemory fallback.";
+
+pub struct Translation {
+    pub text: String,
+    pub warning: Option<String>,
+}
+
 /// Shared HTTP agent for every backend. Honors an optional proxy (needed to
 /// reach providers blocked on this network, e.g. Google behind the GFW) and
 /// bounds connect/total time so an unreachable endpoint fails fast instead of
@@ -23,17 +30,26 @@ fn http_agent(cfg: &Config) -> Result<ureq::Agent> {
     Ok(builder.build().into())
 }
 
-/// Translate `text` using the provider configured in `cfg`.
-pub fn translate(cfg: &Config, text: &str) -> Result<String> {
+/// Translate `text` and report non-fatal behavior such as backend fallback.
+pub fn translate_with_warning(cfg: &Config, text: &str) -> Result<Translation> {
     let text = text.trim();
     if text.is_empty() {
-        return Ok(String::new());
+        return Ok(Translation {
+            text: String::new(),
+            warning: None,
+        });
     }
-    match cfg.provider.as_str() {
+    let translated = match cfg.provider.as_str() {
         "mymemory" => mymemory(cfg, text),
         // AI is the quality backend; until a key is set, fall back to the free
         // engine so the tool always works.
-        "ai" if cfg.ai_key.trim().is_empty() => mymemory(cfg, text),
+        "ai" if cfg.ai_key.trim().is_empty() => {
+            let text = mymemory(cfg, text).with_context(|| AI_FALLBACK_WARNING)?;
+            return Ok(Translation {
+                text,
+                warning: Some(AI_FALLBACK_WARNING.to_string()),
+            });
+        }
         "ai" => ai_translate(cfg, text),
         "libre" => libretranslate(cfg, text),
         "google" => {
@@ -42,7 +58,11 @@ pub fn translate(cfg: &Config, text: &str) -> Result<String> {
             google_free(&agent, &src, &tgt, text)
         }
         other => bail!("unknown provider '{}'", other),
-    }
+    }?;
+    Ok(Translation {
+        text: translated,
+        warning: None,
+    })
 }
 
 // ---------- MyMemory: free, no key (reachable in CN) ----------

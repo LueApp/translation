@@ -3,6 +3,8 @@ use crate::{capture, translate};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
+type TranslationMessage = Result<translate::Translation, String>;
+
 pub struct TranslatorApp {
     cfg: Config,
     input: String,
@@ -10,7 +12,7 @@ pub struct TranslatorApp {
     status: String,
     auto_copy: bool,
     show_settings: bool,
-    pending: Option<Receiver<Result<String, String>>>,
+    pending: Option<Receiver<TranslationMessage>>,
 }
 
 impl TranslatorApp {
@@ -72,14 +74,14 @@ impl TranslatorApp {
             return;
         }
         let cfg = self.cfg.clone();
-        let (tx, rx): (Sender<Result<String, String>>, Receiver<Result<String, String>>) =
+        let (tx, rx): (Sender<TranslationMessage>, Receiver<TranslationMessage>) =
             std::sync::mpsc::channel();
         self.pending = Some(rx);
         self.status = "Translating…".to_string();
         self.result.clear();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let r = translate::translate(&cfg, &text).map_err(|e| e.to_string());
+            let r = translate::translate_with_warning(&cfg, &text).map_err(|e| e.to_string());
             let _ = tx.send(r);
             ctx.request_repaint();
         });
@@ -93,14 +95,20 @@ impl eframe::App for TranslatorApp {
         // Poll the background translation worker.
         if let Some(rx) = &self.pending {
             match rx.try_recv() {
-                Ok(Ok(text)) => {
-                    if self.auto_copy && !text.is_empty() {
-                        let _ = capture::set_clipboard(&text);
-                        self.status = "Copied to clipboard".to_string();
-                    } else {
-                        self.status.clear();
+                Ok(Ok(translation)) => {
+                    let copied = self.auto_copy && !translation.text.is_empty();
+                    if copied {
+                        let _ = capture::set_clipboard(&translation.text);
                     }
-                    self.result = text;
+                    self.status = match (translation.warning.as_deref(), copied) {
+                        (Some(warning), true) => {
+                            format!("Warning: {warning} Copied to clipboard.")
+                        }
+                        (Some(warning), false) => format!("Warning: {warning}"),
+                        (None, true) => "Copied to clipboard".to_string(),
+                        (None, false) => String::new(),
+                    };
+                    self.result = translation.text;
                     self.pending = None;
                 }
                 Ok(Err(e)) => {
