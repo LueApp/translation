@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 
 /// Read the current selection. On KDE Plasma Wayland `ext-data-control` is
 /// advertised, so `wl-paste --primary` reads the highlighted text copy-free.
@@ -30,16 +30,34 @@ pub fn notify(summary: &str, body: &str) {
 }
 
 pub fn set_clipboard(text: &str) -> Result<()> {
-    let mut child = Command::new("wl-copy")
+    let child = Command::new("wl-copy")
         .stdin(Stdio::piped())
         .spawn()
         .context("spawning wl-copy")?;
-    child
-        .stdin
-        .as_mut()
-        .context("wl-copy stdin")?
-        .write_all(text.as_bytes())?;
-    child.wait()?;
+
+    write_to_child(child, text.as_bytes(), "wl-copy")
+}
+
+fn write_to_child(mut child: Child, input: &[u8], command: &str) -> Result<()> {
+    // wl-copy reads until EOF before it offers the clipboard selection. Taking
+    // stdin lets us close the pipe before wait(), otherwise each side waits for
+    // the other indefinitely and the translation UI appears to be stuck.
+    {
+        let mut stdin = child
+            .stdin
+            .take()
+            .with_context(|| format!("{command} stdin"))?;
+        stdin
+            .write_all(input)
+            .with_context(|| format!("writing to {command}"))?;
+    }
+
+    let status = child
+        .wait()
+        .with_context(|| format!("waiting for {command}"))?;
+    if !status.success() {
+        bail!("{command} exited with {:?}", status.code());
+    }
     Ok(())
 }
 
@@ -87,4 +105,24 @@ fn run(cmd: &str, args: &[&str]) -> Result<String> {
         return Err(anyhow!("{cmd} exited with {:?}", out.status.code()));
     }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closes_child_stdin_before_waiting() {
+        // `timeout` makes this regression bounded: if stdin remains open, cat
+        // exits with 124 after one second and the assertion fails instead of
+        // hanging the test suite.
+        let child = Command::new("timeout")
+            .args(["1", "cat"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        write_to_child(child, b"translated text", "test command").unwrap();
+    }
 }
