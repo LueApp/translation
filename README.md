@@ -95,6 +95,9 @@ Common presets (base_url / model):
 
 `source_lang = "auto"` auto-detects; if the text is already in `target_lang`
 it flips to English (so selection-translate always does something useful).
+With the AI backend, entering or selecting a single word automatically produces
+a concise dictionary-style entry containing its commonly used meanings, grouped
+by part of speech and ordered by frequency. Longer text is translated normally.
 
 ## OCR languages
 

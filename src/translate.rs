@@ -107,11 +107,7 @@ fn ai_translate(cfg: &Config, text: &str) -> Result<String> {
     let (src, tgt) = resolve_langs(cfg, text);
     let src_name = lang_name(&src);
     let tgt_name = lang_name(&tgt);
-    let system = format!(
-        "You are a professional translator. Translate the user's text from {src_name} into {tgt_name}. \
-         Preserve meaning, tone, terminology and formatting. Output ONLY the translation — no quotes, \
-         no explanations, no notes, no romanization."
-    );
+    let system = ai_system_prompt(&src_name, &tgt_name, is_single_word(text));
     let url = format!("{}/chat/completions", cfg.ai_base_url.trim_end_matches('/'));
     let body = serde_json::json!({
         "model": cfg.ai_model,
@@ -139,6 +135,89 @@ fn ai_translate(cfg: &Config, text: &str) -> Result<String> {
             None => bail!("unexpected AI response: {v}"),
         },
     }
+}
+
+fn ai_system_prompt(src_name: &str, tgt_name: &str, single_word: bool) -> String {
+    if single_word {
+        format!(
+            "You are a concise bilingual dictionary. The user's input is one word in {src_name}. \
+             Give all of its common, frequently used meanings in {tgt_name}, ordered from most to \
+             least frequent and grouped by part of speech. Keep each sense concise, but include a \
+             short usage label when it distinguishes meanings. Do not merge distinct common senses, \
+             and omit rare, obsolete, or highly specialized senses. Output ONLY the dictionary-style \
+             entry — no preamble, notes, or quotes."
+        )
+    } else {
+        format!(
+            "You are a professional translator. Translate the user's text from {src_name} into {tgt_name}. \
+             Preserve meaning, tone, terminology and formatting. Output ONLY the translation — no quotes, \
+             no explanations, no notes, no romanization."
+        )
+    }
+}
+
+/// Decide whether an input is a lexical lookup rather than a phrase. Latin and
+/// other space-delimited scripts may contain apostrophes or hyphens. Han text
+/// needs a small length bound because sentences normally contain no spaces.
+fn is_single_word(text: &str) -> bool {
+    let word = text.trim().trim_matches(|c: char| {
+        matches!(
+            c,
+            '"' | '\''
+                | '‘'
+                | '’'
+                | '“'
+                | '”'
+                | '.'
+                | ','
+                | '!'
+                | '?'
+                | ':'
+                | ';'
+                | '。'
+                | '，'
+                | '！'
+                | '？'
+                | '：'
+                | '；'
+        )
+    });
+    if word.is_empty() || word.chars().any(char::is_whitespace) {
+        return false;
+    }
+
+    let chars: Vec<char> = word.chars().collect();
+    let mut letters = 0usize;
+    let mut han = 0usize;
+    for (i, c) in chars.iter().copied().enumerate() {
+        if c.is_alphabetic() {
+            letters += 1;
+            if is_han(c) {
+                han += 1;
+            }
+        } else if c.is_numeric() {
+            // Alphanumeric terms such as "Web2" are useful lookups, while a
+            // bare number is rejected by the `letters > 0` check below.
+        } else if matches!(c, '-' | '\'' | '’')
+            && i > 0
+            && i + 1 < chars.len()
+            && chars[i - 1].is_alphanumeric()
+            && chars[i + 1].is_alphanumeric()
+        {
+            // Internal separators are part of contractions/compound words.
+        } else {
+            return false;
+        }
+    }
+
+    letters > 0 && (han == 0 || chars.len() <= 4)
+}
+
+fn is_han(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF
+    )
 }
 
 // ---------- LibreTranslate (self-hostable; public instance needs a key) ----------
@@ -368,4 +447,51 @@ fn hard_split(s: &str, max_bytes: usize) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_single_word_lookups() {
+        for input in [
+            "bank",
+            " well-known ",
+            "don't",
+            "Web2",
+            "“hello!”",
+            "银行",
+            "食べる",
+            "안녕하세요",
+        ] {
+            assert!(is_single_word(input), "expected a word: {input:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_phrases_and_non_words() {
+        for input in [
+            "",
+            "two words",
+            "hello world!",
+            "今天天气很好",
+            "hello/world",
+            "123",
+            "-word",
+        ] {
+            assert!(!is_single_word(input), "expected a phrase: {input:?}");
+        }
+    }
+
+    #[test]
+    fn uses_dictionary_prompt_only_for_single_words() {
+        let dictionary = ai_system_prompt("English", "Chinese (Simplified)", true);
+        assert!(dictionary.contains("all of its common, frequently used meanings"));
+        assert!(dictionary.contains("grouped by part of speech"));
+
+        let translation = ai_system_prompt("English", "Chinese (Simplified)", false);
+        assert!(translation.contains("professional translator"));
+        assert!(!translation.contains("bilingual dictionary"));
+    }
 }
