@@ -4,6 +4,11 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
 type TranslationMessage = Result<translate::Translation, String>;
+type ClipboardMessage = Result<(), String>;
+
+fn word_count(text: &str) -> usize {
+    text.split_whitespace().count()
+}
 
 pub struct TranslatorApp {
     cfg: Config,
@@ -13,6 +18,8 @@ pub struct TranslatorApp {
     auto_copy: bool,
     show_settings: bool,
     pending: Option<Receiver<TranslationMessage>>,
+    clipboard_pending: Option<Receiver<ClipboardMessage>>,
+    clipboard_success_status: String,
 }
 
 impl TranslatorApp {
@@ -23,9 +30,34 @@ impl TranslatorApp {
         auto: bool,
         auto_copy: bool,
     ) -> Self {
-        // Load a CJK-capable font as a fallback so Chinese/Japanese/Korean render
-        // (egui's built-in fonts have no CJK glyphs → otherwise shows □□□).
+        // egui's built-in fonts do not cover the whole IPA block. Add a broad
+        // Latin/Unicode fallback first so pronunciations such as /ˈɪmɪdʒɪŋ/
+        // render instead of containing replacement boxes.
         let mut fonts = egui::FontDefinitions::default();
+        let unicode_candidates = [
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ];
+        for path in unicode_candidates {
+            if let Ok(bytes) = std::fs::read(path) {
+                fonts.font_data.insert(
+                    "unicode".to_owned(),
+                    std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+                );
+                for fam in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                    fonts
+                        .families
+                        .entry(fam)
+                        .or_default()
+                        .insert(0, "unicode".to_owned());
+                }
+                break;
+            }
+        }
+
+        // Load a CJK-capable font after the Unicode fallback so
+        // Chinese/Japanese/Korean continue to render as well.
         let cjk_candidates = [
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
@@ -61,6 +93,8 @@ impl TranslatorApp {
             auto_copy,
             show_settings: false,
             pending: None,
+            clipboard_pending: None,
+            clipboard_success_status: String::new(),
         };
         if auto && !app.input.trim().is_empty() {
             app.start_translate(&cc.egui_ctx);
@@ -86,6 +120,20 @@ impl TranslatorApp {
             ctx.request_repaint();
         });
     }
+
+    fn start_copy(&mut self, ctx: &egui::Context, text: String, success_status: String) {
+        let (tx, rx): (Sender<ClipboardMessage>, Receiver<ClipboardMessage>) =
+            std::sync::mpsc::channel();
+        self.clipboard_pending = Some(rx);
+        self.clipboard_success_status = success_status;
+        self.status = "Copying to clipboard…".to_string();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = capture::set_clipboard(&text).map_err(|e| e.to_string());
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+    }
 }
 
 impl eframe::App for TranslatorApp {
@@ -97,19 +145,20 @@ impl eframe::App for TranslatorApp {
             match rx.try_recv() {
                 Ok(Ok(translation)) => {
                     let copied = self.auto_copy && !translation.text.is_empty();
-                    if copied {
-                        let _ = capture::set_clipboard(&translation.text);
-                    }
-                    self.status = match (translation.warning.as_deref(), copied) {
-                        (Some(warning), true) => {
-                            format!("Warning: {warning} Copied to clipboard.")
-                        }
-                        (Some(warning), false) => format!("Warning: {warning}"),
-                        (None, true) => "Copied to clipboard".to_string(),
-                        (None, false) => String::new(),
+                    let success_status = match translation.warning.as_deref() {
+                        Some(warning) => format!("Warning: {warning} Copied to clipboard."),
+                        None => "Copied to clipboard".to_string(),
                     };
                     self.result = translation.text;
                     self.pending = None;
+                    if copied {
+                        self.start_copy(&ctx, self.result.clone(), success_status);
+                    } else {
+                        self.status = translation
+                            .warning
+                            .map(|warning| format!("Warning: {warning}"))
+                            .unwrap_or_default();
+                    }
                 }
                 Ok(Err(e)) => {
                     self.status = format!("Error: {e}");
@@ -117,6 +166,21 @@ impl eframe::App for TranslatorApp {
                 }
                 Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(60)),
                 Err(TryRecvError::Disconnected) => self.pending = None,
+            }
+        }
+
+        if let Some(rx) = &self.clipboard_pending {
+            match rx.try_recv() {
+                Ok(Ok(())) => {
+                    self.status = std::mem::take(&mut self.clipboard_success_status);
+                    self.clipboard_pending = None;
+                }
+                Ok(Err(error)) => {
+                    self.status = format!("Clipboard error: {error}");
+                    self.clipboard_pending = None;
+                }
+                Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(60)),
+                Err(TryRecvError::Disconnected) => self.clipboard_pending = None,
             }
         }
 
@@ -154,7 +218,7 @@ impl eframe::App for TranslatorApp {
 
         egui::TopBottomPanel::bottom("status").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                if self.pending.is_some() {
+                if self.pending.is_some() || self.clipboard_pending.is_some() {
                     ui.spinner();
                 }
                 ui.label(&self.status);
@@ -162,7 +226,12 @@ impl eframe::App for TranslatorApp {
         });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.label("Source text:");
+            ui.horizontal(|ui| {
+                ui.label("Source text:");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.weak(format!("Words: {}", word_count(&self.input)));
+                });
+            });
             // Source in its own height-capped scroll area so a long selection
             // can't push the translation off-screen.
             let resp = egui::ScrollArea::vertical()
@@ -183,7 +252,11 @@ impl eframe::App for TranslatorApp {
                 .horizontal(|ui| {
                     let c = ui.button("Translate  (Ctrl+Enter)").clicked();
                     if ui.button("Copy result").clicked() && !self.result.is_empty() {
-                        let _ = capture::set_clipboard(&self.result);
+                        self.start_copy(
+                            &ctx,
+                            self.result.clone(),
+                            "Copied to clipboard".to_string(),
+                        );
                     }
                     c
                 })
@@ -224,6 +297,22 @@ impl eframe::App for TranslatorApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::word_count;
+
+    #[test]
+    fn counts_whitespace_delimited_words() {
+        assert_eq!(word_count("one two\nthree\tfour"), 4);
+        assert_eq!(word_count("  hello,   world!  "), 2);
+    }
+
+    #[test]
+    fn empty_input_has_no_words() {
+        assert_eq!(word_count(" \n\t"), 0);
     }
 }
 

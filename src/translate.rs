@@ -141,11 +141,14 @@ fn ai_system_prompt(src_name: &str, tgt_name: &str, single_word: bool) -> String
     if single_word {
         format!(
             "You are a concise bilingual dictionary. The user's input is one word in {src_name}. \
-             Give all of its common, frequently used meanings in {tgt_name}, ordered from most to \
-             least frequent and grouped by part of speech. Keep each sense concise, but include a \
-             short usage label when it distinguishes meanings. Do not merge distinct common senses, \
-             and omit rare, obsolete, or highly specialized senses. Output ONLY the dictionary-style \
-             entry — no preamble, notes, or quotes."
+             Begin the entry with the source word and its pronunciation in the source language's \
+             standard learner-friendly notation (for example, IPA for English, pinyin with tone \
+             marks for Mandarin, or kana for Japanese). Then give all of its common, frequently used \
+             meanings in {tgt_name}, ordered from most to least frequent and grouped by part of speech. \
+             Keep each sense concise, but include a short usage label when it distinguishes meanings. \
+             Do not merge distinct common senses, and omit rare, obsolete, or highly specialized senses. \
+             Use plain text only, without Markdown formatting such as asterisks. Output ONLY the \
+             dictionary-style entry — no preamble, notes, or quotes."
         )
     } else {
         format!(
@@ -487,6 +490,9 @@ mod tests {
     #[test]
     fn uses_dictionary_prompt_only_for_single_words() {
         let dictionary = ai_system_prompt("English", "Chinese (Simplified)", true);
+        assert!(dictionary.contains("pronunciation"));
+        assert!(dictionary.contains("IPA for English"));
+        assert!(dictionary.contains("plain text only"));
         assert!(dictionary.contains("all of its common, frequently used meanings"));
         assert!(dictionary.contains("grouped by part of speech"));
 

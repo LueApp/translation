@@ -1,6 +1,9 @@
 use anyhow::{anyhow, bail, Context, Result};
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+const WL_COPY_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Read the current selection. On KDE Plasma Wayland `ext-data-control` is
 /// advertised, so `wl-paste --primary` reads the highlighted text copy-free.
@@ -30,15 +33,47 @@ pub fn notify(summary: &str, body: &str) {
 }
 
 pub fn set_clipboard(text: &str) -> Result<()> {
+    // Plasma's Klipper speaks KWin's native ext-data-control protocol. Prefer
+    // it over wl-copy: wl-clipboard 2.2 only understands the older zwlr
+    // data-control protocol and can otherwise hang while waiting for its
+    // focus-dependent fallback surface to be activated.
+    if set_clipboard_via_klipper(text) {
+        return Ok(());
+    }
+
     let child = Command::new("wl-copy")
         .stdin(Stdio::piped())
         .spawn()
         .context("spawning wl-copy")?;
 
-    write_to_child(child, text.as_bytes(), "wl-copy")
+    write_to_child(child, text.as_bytes(), "wl-copy", WL_COPY_EXIT_TIMEOUT)
 }
 
-fn write_to_child(mut child: Child, input: &[u8], command: &str) -> Result<()> {
+fn set_clipboard_via_klipper(text: &str) -> bool {
+    Command::new("busctl")
+        .args([
+            "--user",
+            "--timeout=2s",
+            "call",
+            "org.kde.klipper",
+            "/klipper",
+            "org.kde.klipper.klipper",
+            "setClipboardContents",
+            "s",
+        ])
+        .arg(text)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn write_to_child(
+    mut child: Child,
+    input: &[u8],
+    command: &str,
+    exit_timeout: Duration,
+) -> Result<()> {
     // wl-copy reads until EOF before it offers the clipboard selection. Taking
     // stdin lets us close the pipe before wait(), otherwise each side waits for
     // the other indefinitely and the translation UI appears to be stuck.
@@ -52,9 +87,21 @@ fn write_to_child(mut child: Child, input: &[u8], command: &str) -> Result<()> {
             .with_context(|| format!("writing to {command}"))?;
     }
 
-    let status = child
-        .wait()
-        .with_context(|| format!("waiting for {command}"))?;
+    let deadline = Instant::now() + exit_timeout;
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .with_context(|| format!("waiting for {command}"))?
+        {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("{command} did not acquire the Wayland clipboard within {exit_timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
     if !status.success() {
         bail!("{command} exited with {:?}", status.code());
     }
@@ -123,6 +170,34 @@ mod tests {
             .spawn()
             .unwrap();
 
-        write_to_child(child, b"translated text", "test command").unwrap();
+        write_to_child(
+            child,
+            b"translated text",
+            "test command",
+            Duration::from_secs(1),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn kills_child_that_does_not_exit() {
+        let child = Command::new("sleep")
+            .arg("60")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let started = Instant::now();
+        let error = write_to_child(
+            child,
+            b"translated text",
+            "test command",
+            Duration::from_millis(50),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("did not acquire"));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }
