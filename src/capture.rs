@@ -1,32 +1,43 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const WL_COPY_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Read the current selection. On KDE Plasma Wayland `ext-data-control` is
-/// advertised, so `wl-paste --primary` reads the highlighted text copy-free.
+/// Read the current selection. Some apps expose it through Wayland PRIMARY,
+/// while XWayland apps may expose it only through X11 PRIMARY. The regular
+/// clipboard is not a selection and can contain unrelated, older text.
 pub fn read_primary() -> Result<String> {
+    read_primary_with(run)
+}
+
+fn read_primary_with(mut read: impl FnMut(&str, &[&str]) -> Result<String>) -> Result<String> {
     for (cmd, args) in [
         ("wl-paste", &["--primary", "--no-newline"][..]),
-        ("wl-paste", &["--no-newline"][..]),
         ("xclip", &["-selection", "primary", "-o"][..]),
     ] {
-        if let Ok(s) = run(cmd, args) {
+        if let Ok(s) = read(cmd, args) {
             if !s.trim().is_empty() {
                 return Ok(s);
             }
         }
     }
-    bail!("no text selected (PRIMARY selection and clipboard are empty)")
+    bail!("No selected text available. Press Ctrl+C, then paste here.")
 }
 
 /// Show a desktop notification (reliable on Wayland/KDE from a background daemon,
 /// unlike trying to surface our own window).
 pub fn notify(summary: &str, body: &str) {
     let _ = Command::new("notify-send")
-        .args(["-a", "AI Translate", "-i", "accessories-dictionary", "-t", "12000"])
+        .args([
+            "-a",
+            "AI Translate",
+            "-i",
+            "accessories-dictionary",
+            "-t",
+            "12000",
+        ])
         .arg(summary)
         .arg(body)
         .status();
@@ -138,7 +149,9 @@ pub fn ocr_region(langs: &str) -> Result<String> {
     }
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if text.is_empty() {
-        bail!("OCR found no text in the captured region (try a clearer area or add a language pack)");
+        bail!(
+            "OCR found no text in the captured region (try a clearer area or add a language pack)"
+        );
     }
     Ok(text)
 }
@@ -157,6 +170,45 @@ fn run(cmd: &str, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn x11_selection_wins_when_wayland_primary_is_unavailable() {
+        let mut calls = Vec::new();
+        let text = read_primary_with(|cmd, args| {
+            calls.push((
+                cmd.to_string(),
+                args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
+            ));
+            if cmd == "xclip" {
+                Ok("selected in XWayland".into())
+            } else {
+                Err(anyhow!("no Wayland selection"))
+            }
+        })
+        .unwrap();
+        assert_eq!(text, "selected in XWayland");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1].0, "xclip");
+        assert_eq!(calls[1].1, ["-selection", "primary", "-o"]);
+    }
+
+    #[test]
+    fn missing_selection_does_not_read_old_clipboard_text() {
+        let mut calls = Vec::new();
+        let error = read_primary_with(|cmd, args| {
+            calls.push((
+                cmd.to_string(),
+                args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
+            ));
+            Err(anyhow!("no selection"))
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("No selected text"));
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().all(|(cmd, args)| {
+            (cmd == "wl-paste" && args.iter().any(|arg| arg == "--primary")) || cmd == "xclip"
+        }));
+    }
 
     #[test]
     fn closes_child_stdin_before_waiting() {

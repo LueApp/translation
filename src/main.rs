@@ -36,15 +36,15 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = Config::load()?;
     match cli.cmd.unwrap_or(Cmd::Popup) {
-        Cmd::Popup => run_gui(cfg, String::new(), false, false),
-        Cmd::Selection => {
-            let text = capture::read_primary().unwrap_or_default();
-            run_gui(cfg, text, true, true)
-        }
+        Cmd::Popup => run_gui(cfg, String::new(), false, false, String::new()),
+        Cmd::Selection => match capture::read_primary() {
+            Ok(text) => run_gui(cfg, text, true, true, String::new()),
+            Err(error) => run_gui(cfg, String::new(), false, false, error.to_string()),
+        },
         Cmd::Ocr => {
             let langs = cfg.ocr_langs.clone();
             match capture::ocr_region(&langs) {
-                Ok(text) => run_gui(cfg, text, true, true),
+                Ok(text) => run_gui(cfg, text, true, true, String::new()),
                 Err(e) => {
                     capture::notify("AI Translate — OCR", &e.to_string());
                     Ok(())
@@ -55,6 +55,9 @@ fn main() -> Result<()> {
             let translation = translate::translate_with_warning(&cfg, &text.join(" "))?;
             if let Some(warning) = translation.warning {
                 eprintln!("Warning: {warning}");
+            }
+            if !translation.source.is_empty() {
+                eprintln!("Source: {}", translation.source);
             }
             println!("{}", translation.text);
             Ok(())
@@ -111,7 +114,13 @@ for (let i = 0; i < list.length; i++) { const w = list[i];
     call(&["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.start"]);
 }
 
-fn run_gui(cfg: Config, initial: String, auto: bool, auto_copy: bool) -> Result<()> {
+fn run_gui(
+    cfg: Config,
+    initial: String,
+    auto: bool,
+    auto_copy: bool,
+    initial_status: String,
+) -> Result<()> {
     // Move the window to the cursor shortly after it maps (KWin needs the window
     // to exist). Two attempts cover slow first-paint.
     std::thread::spawn(|| {
@@ -134,7 +143,16 @@ fn run_gui(cfg: Config, initial: String, auto: bool, auto_copy: bool) -> Result<
     eframe::run_native(
         "AI Translate",
         options,
-        Box::new(move |cc| Ok(Box::new(ui::TranslatorApp::new(cc, cfg, initial, auto, auto_copy)))),
+        Box::new(move |cc| {
+            Ok(Box::new(ui::TranslatorApp::new(
+                cc,
+                cfg,
+                initial,
+                auto,
+                auto_copy,
+                initial_status,
+            )))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
     Ok(())

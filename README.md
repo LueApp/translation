@@ -14,6 +14,12 @@ Built in Rust (egui GUI — no webkit), tested on **Ubuntu 26.04 / KDE Plasma 6 
 | Capture & OCR | **Ctrl+Alt+R** | Drag a screen region → Tesseract OCR → translate → result window at cursor + clipboard |
 | Popup | **Meta+Shift+T** | Opens a type/paste window at the cursor |
 
+Some input fields (including some Codex and WeChat fields) do not publish their
+highlighted text as a desktop PRIMARY selection. In those fields, the selection
+shortcut opens the popup with a capture message instead of translating an old
+clipboard entry. Copy the highlighted text with **Ctrl+C**, then paste it into
+the popup to translate it.
+
 **Window placement on Wayland:** a background daemon's window can't self-position
 or auto-raise on Wayland. Two KDE mechanisms make it work: a **KWin window rule**
 (`wmclass=ai-translate` → keep-above + no focus-stealing) so it surfaces on top,
@@ -46,6 +52,44 @@ Configured in `~/.config/ai-translate/config.toml` (`provider = …`):
 - `google` — free Google endpoint. **Blocked behind the GFW** — only works if you
   set `proxy_url` (see below) to route through a VPN/proxy.
 
+### Ordered fallback sources
+
+Add sources in the popup's **⚙ Settings** panel, or edit `config.toml` directly.
+Sources are tried in list order. A failed or timed-out source moves to the next;
+the popup shows the successful source label, and `ai-translate text` writes it to
+stderr while keeping stdout as translation text. The timeout is in seconds for
+the whole source attempt, including all chunks of long text.
+
+```toml
+[[sources]]
+provider = "ai"
+label = "DeepSeek primary"
+timeout_secs = 12
+proxy_url = "direct"  # bypass a proxy that cannot reach this endpoint
+ai_base_url = "https://api.deepseek.com/v1"
+ai_model = "deepseek-chat"
+ai_key = "sk-..."
+
+[[sources]]
+provider = "ai"
+label = "Backup model"
+timeout_secs = 8
+ai_base_url = "https://example.com/v1"
+ai_model = "backup-model"
+ai_key = "sk-..."
+
+[[sources]]
+provider = "mymemory"
+label = "Free fallback"
+timeout_secs = 10
+```
+
+Each AI or LibreTranslate entry may have its own URL, model, and key. Blank fields
+inherit the existing single-provider settings. When `sources` is absent or empty,
+the old `provider` setting works as before. Set `timeout_secs` above zero.
+Each source can also set `proxy_url`: blank inherits the global proxy, `direct`
+disables proxies, and a URL uses that proxy for this source.
+
 ### Proxy (for blocked endpoints)
 
 To reach providers blocked on your network (e.g. Google), set a proxy that all
@@ -63,7 +107,8 @@ backends route through. Three ways, in precedence order:
    daemon (a systemd user service) won't see vars you only `export` in a shell,
    so prefer #1 or #2 for the global-hotkey triggers.
 
-Leave `proxy_url` empty (`""`) for a direct connection.
+Set `proxy_url = "direct"` to bypass all proxies. Leave it empty (`""`) to
+use proxy settings from the environment.
 
 ### Settings panel
 
