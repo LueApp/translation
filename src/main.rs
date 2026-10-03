@@ -20,7 +20,7 @@ struct Cli {
 enum Cmd {
     /// Open an empty popup to type text (default)
     Popup,
-    /// Translate the current selection (PRIMARY), copy-free on KDE Wayland
+    /// Translate selected text in the focused application
     Selection,
     /// Capture a screen region, OCR it, and translate
     Ocr,
@@ -37,7 +37,7 @@ fn main() -> Result<()> {
     let cfg = Config::load()?;
     match cli.cmd.unwrap_or(Cmd::Popup) {
         Cmd::Popup => run_gui(cfg, String::new(), false, false, String::new()),
-        Cmd::Selection => match capture::read_primary() {
+        Cmd::Selection => match capture::read_selection() {
             Ok(text) => run_gui(cfg, text, true, true, String::new()),
             Err(error) => run_gui(cfg, String::new(), false, false, error.to_string()),
         },

@@ -1,29 +1,224 @@
+use crate::config::Config;
 use anyhow::{Context, Result, anyhow, bail};
+use ashpd::desktop::{
+    PersistMode,
+    remote_desktop::{DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions},
+};
 use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+use x11rb::connection::Connection;
+use x11rb::protocol::Event;
+use x11rb::protocol::xfixes::{ConnectionExt as XfixesConnectionExt, SelectionEventMask};
+use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as XprotoConnectionExt};
+use x11rb::rust_connection::RustConnection;
 
 const WL_COPY_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
+const SELECTION_COPY_TIMEOUT: Duration = Duration::from_millis(1200);
 
-/// Read the current selection. Some apps expose it through Wayland PRIMARY,
-/// while XWayland apps may expose it only through X11 PRIMARY. The regular
-/// clipboard is not a selection and can contain unrelated, older text.
-pub fn read_primary() -> Result<String> {
-    read_primary_with(run)
+/// Ask the focused app to copy its selection. Input fields in Chrome and WeChat
+/// often do not publish PRIMARY, so reading it can return a previous selection.
+pub fn read_selection() -> Result<String> {
+    let x11 = focused_window_is_x11();
+    let clipboard = if x11 {
+        read_x11_clipboard
+    } else {
+        read_wayland_clipboard
+    };
+    let previous = clipboard().unwrap_or_default();
+    let mut watcher = ClipboardWatcher::new().ok();
+
+    // Let the triggering global shortcut's modifier key go before Ctrl+C.
+    std::thread::sleep(Duration::from_millis(100));
+    if x11 {
+        let status = Command::new("xdotool")
+            .args(["key", "--clearmodifiers", "ctrl+c"])
+            .status()
+            .context("sending Ctrl+C to the focused X11 app")?;
+        if !status.success() {
+            bail!("xdotool could not copy from the focused app");
+        }
+    } else {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("starting Wayland selection capture")?;
+        runtime.block_on(copy_via_remote_desktop())?;
+    }
+
+    wait_for_fresh_clipboard(
+        &previous,
+        || watcher.as_mut().is_some_and(|watcher| watcher.changed()),
+        clipboard,
+    )
 }
 
-fn read_primary_with(mut read: impl FnMut(&str, &[&str]) -> Result<String>) -> Result<String> {
-    for (cmd, args) in [
-        ("wl-paste", &["--primary", "--no-newline"][..]),
-        ("xclip", &["-selection", "primary", "-o"][..]),
-    ] {
-        if let Ok(s) = read(cmd, args) {
-            if !s.trim().is_empty() {
-                return Ok(s);
+fn focused_window_is_x11() -> bool {
+    let Ok((connection, screen)) = x11rb::connect(None) else {
+        return false;
+    };
+    let root = connection.setup().roots[screen].root;
+    let Some(top_level) = connection
+        .get_input_focus()
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| top_level_window(&connection, reply.focus, root))
+    else {
+        return false;
+    };
+    connection
+        .get_property(
+            false,
+            top_level,
+            AtomEnum::WM_CLASS,
+            AtomEnum::STRING,
+            0,
+            256,
+        )
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .is_some_and(|reply| !reply.value.is_empty())
+}
+
+fn read_x11_clipboard() -> Result<String> {
+    run("xclip", &["-selection", "clipboard", "-o"])
+}
+
+fn top_level_window(connection: &RustConnection, mut window: u32, root: u32) -> Option<u32> {
+    for _ in 0..64 {
+        if window == 0 || window == root {
+            return None;
+        }
+        let parent = connection.query_tree(window).ok()?.reply().ok()?.parent;
+        if parent == root {
+            return Some(window);
+        }
+        window = parent;
+    }
+    None
+}
+
+fn read_wayland_clipboard() -> Result<String> {
+    run("wl-paste", &["--no-newline"])
+}
+
+fn wait_for_fresh_clipboard(
+    previous: &str,
+    mut changed: impl FnMut() -> bool,
+    mut read: impl FnMut() -> Result<String>,
+) -> Result<String> {
+    let deadline = Instant::now() + SELECTION_COPY_TIMEOUT;
+    let mut saw_change = false;
+    loop {
+        saw_change |= changed();
+        if let Ok(text) = read() {
+            if !text.trim().is_empty() && (saw_change || text != previous) {
+                return Ok(text);
             }
         }
+        if Instant::now() >= deadline {
+            bail!("Could not copy selected text. Keep it highlighted and try again.");
+        }
+        std::thread::sleep(Duration::from_millis(30));
     }
-    bail!("No selected text available. Press Ctrl+C, then paste here.")
+}
+
+/// XFixes reports a new CLIPBOARD owner even when the copied text equals the
+/// previous clipboard text (common with KDE's selection/clipboard sync).
+struct ClipboardWatcher {
+    connection: RustConnection,
+    clipboard_atom: u32,
+}
+
+impl ClipboardWatcher {
+    fn new() -> Result<Self> {
+        let (connection, screen) = x11rb::connect(None)?;
+        let clipboard_atom = connection.intern_atom(false, b"CLIPBOARD")?.reply()?.atom;
+        connection.xfixes_query_version(5, 0)?.reply()?;
+        connection
+            .xfixes_select_selection_input(
+                connection.setup().roots[screen].root,
+                clipboard_atom,
+                SelectionEventMask::SET_SELECTION_OWNER,
+            )?
+            .check()?;
+        connection.flush()?;
+        Ok(Self {
+            connection,
+            clipboard_atom,
+        })
+    }
+
+    fn changed(&mut self) -> bool {
+        while let Ok(Some(event)) = self.connection.poll_for_event() {
+            if let Event::XfixesSelectionNotify(event) = event {
+                if event.selection == self.clipboard_atom && event.owner != 0 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+async fn copy_via_remote_desktop() -> Result<()> {
+    let portal = RemoteDesktop::new()
+        .await
+        .context("Wayland keyboard-control portal is unavailable")?;
+    let session = portal.create_session(Default::default()).await?;
+    let token_path = Config::dir()?.join("remote-desktop-token");
+    let token = std::fs::read_to_string(&token_path).ok();
+    let options = SelectDevicesOptions::default()
+        .set_devices(Some(DeviceType::Keyboard.into()))
+        .set_persist_mode(PersistMode::ExplicitlyRevoked)
+        .set_restore_token(token.as_deref().map(str::trim));
+    portal.select_devices(&session, options).await?.response()?;
+    let response = portal
+        .start(&session, None, Default::default())
+        .await?
+        .response()?;
+    if !response.devices().contains(DeviceType::Keyboard) {
+        bail!("Keyboard access was not granted; copy and paste into the popup instead.");
+    }
+    if let Some(token) = response.restore_token() {
+        save_remote_desktop_token(&token_path, token)?;
+    }
+
+    // The first request may show a permission dialog; allow the target app to
+    // regain focus after it closes before injecting Ctrl+C.
+    std::thread::sleep(Duration::from_millis(150));
+    portal
+        .notify_keyboard_keycode(&session, 29, KeyState::Pressed, Default::default())
+        .await?;
+    let press_c = portal
+        .notify_keyboard_keycode(&session, 46, KeyState::Pressed, Default::default())
+        .await;
+    let release_c = portal
+        .notify_keyboard_keycode(&session, 46, KeyState::Released, Default::default())
+        .await;
+    let release_ctrl = portal
+        .notify_keyboard_keycode(&session, 29, KeyState::Released, Default::default())
+        .await;
+    press_c?;
+    release_c?;
+    release_ctrl?;
+    std::thread::sleep(Duration::from_millis(100));
+    Ok(())
+}
+
+fn save_remote_desktop_token(path: &std::path::Path, token: &str) -> Result<()> {
+    let dir = path.parent().context("remote-desktop token directory")?;
+    std::fs::create_dir_all(dir)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    file.write_all(token.as_bytes())?;
+    Ok(())
 }
 
 /// Show a desktop notification (reliable on Wayland/KDE from a background daemon,
@@ -172,42 +367,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn x11_selection_wins_when_wayland_primary_is_unavailable() {
-        let mut calls = Vec::new();
-        let text = read_primary_with(|cmd, args| {
-            calls.push((
-                cmd.to_string(),
-                args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
-            ));
-            if cmd == "xclip" {
-                Ok("selected in XWayland".into())
-            } else {
-                Err(anyhow!("no Wayland selection"))
-            }
-        })
+    fn waits_for_a_fresh_copy() {
+        let mut values = ["old", "", "selected text"].into_iter();
+        let text = wait_for_fresh_clipboard(
+            "old",
+            || false,
+            || Ok(values.next().unwrap_or("selected text").to_string()),
+        )
         .unwrap();
-        assert_eq!(text, "selected in XWayland");
-        assert_eq!(calls.len(), 2);
-        assert_eq!(calls[1].0, "xclip");
-        assert_eq!(calls[1].1, ["-selection", "primary", "-o"]);
+        assert_eq!(text, "selected text");
     }
 
     #[test]
-    fn missing_selection_does_not_read_old_clipboard_text() {
-        let mut calls = Vec::new();
-        let error = read_primary_with(|cmd, args| {
-            calls.push((
-                cmd.to_string(),
-                args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
-            ));
-            Err(anyhow!("no selection"))
-        })
-        .unwrap_err();
-        assert!(error.to_string().contains("No selected text"));
-        assert_eq!(calls.len(), 2);
-        assert!(calls.iter().all(|(cmd, args)| {
-            (cmd == "wl-paste" && args.iter().any(|arg| arg == "--primary")) || cmd == "xclip"
-        }));
+    fn accepts_same_text_after_a_copy_event() {
+        let text =
+            wait_for_fresh_clipboard("selected text", || true, || Ok("selected text".into()))
+                .unwrap();
+        assert_eq!(text, "selected text");
+    }
+
+    #[test]
+    fn unchanged_clipboard_is_not_a_selection() {
+        let error = wait_for_fresh_clipboard("old", || false, || Ok("old".into())).unwrap_err();
+        assert!(error.to_string().contains("Could not copy selected text"));
     }
 
     #[test]
