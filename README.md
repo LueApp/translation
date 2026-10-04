@@ -11,12 +11,14 @@ Built in Rust (egui GUI — no webkit), tested on **Ubuntu 26.04 / KDE Plasma 6 
 | Action | Hotkey | What it does |
 |---|---|---|
 | Translate selection | **Meta+S** | Reads PRIMARY selection when available, otherwise the clipboard; translates it, shows the result **at the mouse cursor**, and **copies it to the clipboard** |
+| Translate clipboard | **Meta+Shift+S** | Reads text already copied to the regular clipboard, translates it, shows the result at the cursor, and copies the translation |
 | Capture & OCR | **Ctrl+Alt+R** | Drag a screen region → Tesseract OCR → translate → result window at cursor + clipboard |
 | Popup | **Meta+Shift+T** | Opens a type/paste window at the cursor |
 
 Some input fields, including Codex and WeChat fields, do not publish their
 highlighted text as PRIMARY. The shortcut may then use older clipboard text.
 Press **Ctrl+C** first if you need the exact text from one of those fields.
+Then press **Meta+Shift+S** to translate that copied text directly.
 
 **Window placement on Wayland:** a background daemon's window can't self-position
 or auto-raise on Wayland. Two KDE mechanisms make it work: a **KWin window rule**

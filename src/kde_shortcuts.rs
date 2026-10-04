@@ -42,6 +42,11 @@ pub async fn run() -> Result<()> {
             ],
         },
         Sc {
+            id: "translate_clipboard",
+            friendly: "Translate copied clipboard text",
+            candidates: vec![cand(META | SHIFT, 'S', "Meta+Shift+S")],
+        },
+        Sc {
             id: "translate_ocr",
             friendly: "Capture a screen region, OCR and translate",
             candidates: vec![
@@ -164,10 +169,8 @@ fn listen_loop() -> Result<()> {
             if component != COMPONENT {
                 continue;
             }
-            let action = match action_id.as_str() {
-                "translate_selection" => "selection",
-                "translate_ocr" => "ocr",
-                _ => "popup",
+            let Some(action) = action_for_shortcut(action_id) else {
+                continue;
             };
             eprintln!("[kde] pressed {action_id} -> spawning {action}");
             match Command::new(&exe).arg(action).spawn() {
@@ -184,6 +187,28 @@ fn listen_loop() -> Result<()> {
 
     let _ = child.wait();
     anyhow::bail!("busctl monitor exited; restarting daemon");
+}
+
+fn action_for_shortcut(id: &str) -> Option<&'static str> {
+    match id {
+        "translate_selection" => Some("selection"),
+        "translate_clipboard" => Some("clipboard"),
+        "translate_ocr" => Some("ocr"),
+        "translate_popup" => Some("popup"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::action_for_shortcut;
+
+    #[test]
+    fn clipboard_shortcut_dispatches_clipboard_command() {
+        assert_eq!(action_for_shortcut("translate_clipboard"), Some("clipboard"));
+        assert_eq!(action_for_shortcut("translate_selection"), Some("selection"));
+        assert_eq!(action_for_shortcut("unknown"), None);
+    }
 }
 
 fn extract_quoted(line: &str) -> Option<String> {
