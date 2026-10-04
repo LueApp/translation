@@ -22,6 +22,8 @@ enum Cmd {
     Popup,
     /// Translate the current selection (PRIMARY), copy-free on KDE Wayland
     Selection,
+    /// Translate text already copied to the regular clipboard
+    Clipboard,
     /// Capture a screen region, OCR it, and translate
     Ocr,
     /// Translate a string and print to stdout (no GUI)
@@ -38,6 +40,10 @@ fn main() -> Result<()> {
     match cli.cmd.unwrap_or(Cmd::Popup) {
         Cmd::Popup => run_gui(cfg, String::new(), false, false, String::new()),
         Cmd::Selection => match capture::read_primary() {
+            Ok(text) => run_gui(cfg, text, true, true, String::new()),
+            Err(error) => run_gui(cfg, String::new(), false, false, error.to_string()),
+        },
+        Cmd::Clipboard => match capture::read_clipboard() {
             Ok(text) => run_gui(cfg, text, true, true, String::new()),
             Err(error) => run_gui(cfg, String::new(), false, false, error.to_string()),
         },

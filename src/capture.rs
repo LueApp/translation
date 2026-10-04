@@ -22,6 +22,25 @@ pub fn read_primary() -> Result<String> {
     bail!("no text selected (PRIMARY selection and clipboard are empty)")
 }
 
+/// Read only the regular clipboard, without consulting PRIMARY selection.
+pub fn read_clipboard() -> Result<String> {
+    read_clipboard_with(run)
+}
+
+fn read_clipboard_with(mut read: impl FnMut(&str, &[&str]) -> Result<String>) -> Result<String> {
+    for (cmd, args) in [
+        ("wl-paste", &["--no-newline"][..]),
+        ("xclip", &["-selection", "clipboard", "-o"][..]),
+    ] {
+        if let Ok(text) = read(cmd, args) {
+            if !text.trim().is_empty() {
+                return Ok(text);
+            }
+        }
+    }
+    bail!("clipboard has no text (copy text before running the clipboard command)")
+}
+
 /// Show a desktop notification (reliable on Wayland/KDE from a background daemon,
 /// unlike trying to surface our own window).
 pub fn notify(summary: &str, body: &str) {
@@ -157,6 +176,26 @@ fn run(cmd: &str, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clipboard_command_reads_regular_clipboard_only() {
+        let mut calls = Vec::new();
+        let text = read_clipboard_with(|cmd, args| {
+            calls.push((
+                cmd.to_string(),
+                args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
+            ));
+            if cmd == "xclip" {
+                Ok("copied text".into())
+            } else {
+                Err(anyhow!("Wayland clipboard unavailable"))
+            }
+        })
+        .unwrap();
+        assert_eq!(text, "copied text");
+        assert_eq!(calls[0].1, ["--no-newline"]);
+        assert_eq!(calls[1].1, ["-selection", "clipboard", "-o"]);
+    }
 
     #[test]
     fn closes_child_stdin_before_waiting() {

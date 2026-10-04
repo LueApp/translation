@@ -159,11 +159,17 @@ then set `ocr_langs = "eng+chi_sim"` in the config.
 ```bash
 ai-translate                 # popup (default)
 ai-translate selection       # translate current selection
+ai-translate clipboard       # translate text already copied to clipboard
 ai-translate ocr             # capture region, OCR, translate
 ai-translate text "hello"    # translate to stdout (no GUI)
 ai-translate daemon          # the hotkey daemon (run by systemd)
 ai-translate config-path     # print config file path
 ```
+
+Use `ai-translate clipboard` after copying text from an input field that does
+not expose PRIMARY selection. It opens the same translation popup and copies
+the translation to the clipboard. The selection command and Meta+S keep their
+existing behavior.
 
 ## Service
 
