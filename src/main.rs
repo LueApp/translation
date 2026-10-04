@@ -1,7 +1,6 @@
 mod capture;
 mod config;
 mod daemon;
-mod focus;
 mod kde_shortcuts;
 mod translate;
 mod ui;
@@ -21,10 +20,8 @@ struct Cli {
 enum Cmd {
     /// Open an empty popup to type text (default)
     Popup,
-    /// Translate PRIMARY selection, with automatic copy fallback in WeChat and Chrome
+    /// Translate the current selection (PRIMARY), copy-free on KDE Wayland
     Selection,
-    /// Translate copied text from the regular clipboard
-    Clipboard,
     /// Capture a screen region, OCR it, and translate
     Ocr,
     /// Translate a string and print to stdout (no GUI)
@@ -39,28 +36,15 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = Config::load()?;
     match cli.cmd.unwrap_or(Cmd::Popup) {
-        Cmd::Popup => run_gui(cfg, String::new(), false, false, String::new()),
+        Cmd::Popup => run_gui(cfg, String::new(), false, false),
         Cmd::Selection => {
-            let captured = match focus::capture_route() {
-                Ok(focus::CaptureRoute::Primary) => capture::read_primary(),
-                Ok(focus::CaptureRoute::Clipboard) => capture::copy_or_existing_clipboard(),
-                Err(error) => Err(anyhow::anyhow!(
-                    "Could not identify the focused app: {error:#}. Copy text and use the clipboard command."
-                )),
-            };
-            match captured {
-                Ok(text) => run_gui(cfg, text, true, true, String::new()),
-                Err(error) => run_gui(cfg, String::new(), false, false, error.to_string()),
-            }
+            let text = capture::read_primary().unwrap_or_default();
+            run_gui(cfg, text, true, true)
         }
-        Cmd::Clipboard => match capture::read_clipboard() {
-            Ok(text) => run_gui(cfg, text, true, true, String::new()),
-            Err(error) => run_gui(cfg, String::new(), false, false, error.to_string()),
-        },
         Cmd::Ocr => {
             let langs = cfg.ocr_langs.clone();
             match capture::ocr_region(&langs) {
-                Ok(text) => run_gui(cfg, text, true, true, String::new()),
+                Ok(text) => run_gui(cfg, text, true, true),
                 Err(e) => {
                     capture::notify("AI Translate — OCR", &e.to_string());
                     Ok(())
@@ -71,9 +55,6 @@ fn main() -> Result<()> {
             let translation = translate::translate_with_warning(&cfg, &text.join(" "))?;
             if let Some(warning) = translation.warning {
                 eprintln!("Warning: {warning}");
-            }
-            if !translation.source.is_empty() {
-                eprintln!("Source: {}", translation.source);
             }
             println!("{}", translation.text);
             Ok(())
@@ -130,13 +111,7 @@ for (let i = 0; i < list.length; i++) { const w = list[i];
     call(&["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.start"]);
 }
 
-fn run_gui(
-    cfg: Config,
-    initial: String,
-    auto: bool,
-    auto_copy: bool,
-    initial_status: String,
-) -> Result<()> {
+fn run_gui(cfg: Config, initial: String, auto: bool, auto_copy: bool) -> Result<()> {
     // Move the window to the cursor shortly after it maps (KWin needs the window
     // to exist). Two attempts cover slow first-paint.
     std::thread::spawn(|| {
@@ -159,16 +134,7 @@ fn run_gui(
     eframe::run_native(
         "AI Translate",
         options,
-        Box::new(move |cc| {
-            Ok(Box::new(ui::TranslatorApp::new(
-                cc,
-                cfg,
-                initial,
-                auto,
-                auto_copy,
-                initial_status,
-            )))
-        }),
+        Box::new(move |cc| Ok(Box::new(ui::TranslatorApp::new(cc, cfg, initial, auto, auto_copy)))),
     )
     .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
     Ok(())

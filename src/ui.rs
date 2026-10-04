@@ -1,4 +1,4 @@
-use crate::config::{Config, SourceConfig};
+use crate::config::Config;
 use crate::{capture, translate};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Duration;
@@ -14,7 +14,6 @@ pub struct TranslatorApp {
     cfg: Config,
     input: String,
     result: String,
-    result_source: String,
     status: String,
     auto_copy: bool,
     show_settings: bool,
@@ -30,7 +29,6 @@ impl TranslatorApp {
         initial: String,
         auto: bool,
         auto_copy: bool,
-        initial_status: String,
     ) -> Self {
         // egui's built-in fonts do not cover the whole IPA block. Add a broad
         // Latin/Unicode fallback first so pronunciations such as /ˈɪmɪdʒɪŋ/
@@ -72,11 +70,7 @@ impl TranslatorApp {
                     std::sync::Arc::new(egui::FontData::from_owned(bytes)),
                 );
                 for fam in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-                    fonts
-                        .families
-                        .entry(fam)
-                        .or_default()
-                        .push("cjk".to_owned());
+                    fonts.families.entry(fam).or_default().push("cjk".to_owned());
                 }
                 break;
             }
@@ -95,8 +89,7 @@ impl TranslatorApp {
             cfg,
             input: initial,
             result: String::new(),
-            result_source: String::new(),
-            status: initial_status,
+            status: String::new(),
             auto_copy,
             show_settings: false,
             pending: None,
@@ -120,7 +113,6 @@ impl TranslatorApp {
         self.pending = Some(rx);
         self.status = "Translating…".to_string();
         self.result.clear();
-        self.result_source.clear();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let r = translate::translate_with_warning(&cfg, &text).map_err(|e| e.to_string());
@@ -154,22 +146,18 @@ impl eframe::App for TranslatorApp {
                 Ok(Ok(translation)) => {
                     let copied = self.auto_copy && !translation.text.is_empty();
                     let success_status = match translation.warning.as_deref() {
-                        Some(warning) => format!(
-                            "Source: {} · {warning} · Copied to clipboard",
-                            translation.source
-                        ),
-                        None => format!("Source: {} · Copied to clipboard", translation.source),
+                        Some(warning) => format!("Warning: {warning} Copied to clipboard."),
+                        None => "Copied to clipboard".to_string(),
                     };
                     self.result = translation.text;
-                    self.result_source = translation.source;
                     self.pending = None;
                     if copied {
                         self.start_copy(&ctx, self.result.clone(), success_status);
                     } else {
-                        self.status = match translation.warning {
-                            Some(warning) => format!("Source: {} · {warning}", self.result_source),
-                            None => format!("Source: {}", self.result_source),
-                        };
+                        self.status = translation
+                            .warning
+                            .map(|warning| format!("Warning: {warning}"))
+                            .unwrap_or_default();
                     }
                 }
                 Ok(Err(e)) => {
@@ -211,26 +199,10 @@ impl eframe::App for TranslatorApp {
                 }
                 ui.separator();
                 egui::ComboBox::from_id_salt("provider")
-                    .selected_text(if self.cfg.sources.is_empty() {
-                        self.cfg.provider.clone()
-                    } else {
-                        "sequence".into()
-                    })
+                    .selected_text(self.cfg.provider.clone())
                     .show_ui(ui, |ui| {
-                        if !self.cfg.sources.is_empty() {
-                            ui.label("Edit sequence in Settings");
-                        }
                         for p in ["mymemory", "ai", "libre", "google"] {
-                            if ui
-                                .selectable_label(
-                                    self.cfg.sources.is_empty() && self.cfg.provider == p,
-                                    p,
-                                )
-                                .clicked()
-                            {
-                                self.cfg.provider = p.to_string();
-                                self.cfg.sources.clear();
-                            }
+                            ui.selectable_value(&mut self.cfg.provider, p.to_string(), p);
                         }
                     });
                 if ui
@@ -271,7 +243,7 @@ impl eframe::App for TranslatorApp {
                         egui::TextEdit::multiline(&mut self.input)
                             .desired_rows(3)
                             .desired_width(f32::INFINITY)
-                            .hint_text("Type text, or trigger from selection / clipboard / OCR…"),
+                            .hint_text("Type text, or trigger from selection / OCR…"),
                     )
                 })
                 .inner;
@@ -296,12 +268,7 @@ impl eframe::App for TranslatorApp {
             }
 
             ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Translation:");
-                if !self.result_source.is_empty() {
-                    ui.weak(format!("Source: {}", self.result_source));
-                }
-            });
+            ui.label("Translation:");
             // Result fills the remaining space and scrolls (auto_shrink=false)
             // instead of growing the window.
             egui::ScrollArea::vertical()
@@ -372,7 +339,7 @@ impl TranslatorApp {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.cfg.proxy_url)
                                 .desired_width(field)
-                                .hint_text("http://127.0.0.1:7890 · direct = bypass · blank = environment"),
+                                .hint_text("http://127.0.0.1:7890 · socks5://… · blank = direct"),
                         );
                         ui.end_row();
 
@@ -418,58 +385,6 @@ impl TranslatorApp {
                         );
                         ui.end_row();
                     });
-
-                ui.separator();
-                ui.label("Translation sequence (top source runs first)");
-                ui.weak("Each source has its own timeout and optional credentials. Empty sequence uses the provider above.");
-                let mut move_source = None;
-                let mut remove_source = None;
-                for index in 0..self.cfg.sources.len() {
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label(format!("{}.", index + 1));
-                        if ui.small_button("↑").clicked() && index > 0 {
-                            move_source = Some((index, index - 1));
-                        }
-                        if ui.small_button("↓").clicked() && index + 1 < self.cfg.sources.len() {
-                            move_source = Some((index, index + 1));
-                        }
-                        if ui.small_button("Remove").clicked() {
-                            remove_source = Some(index);
-                        }
-                    });
-                    let source = &mut self.cfg.sources[index];
-                    ui.horizontal(|ui| {
-                        egui::ComboBox::from_id_salt(("source_provider", index))
-                            .selected_text(&source.provider)
-                            .show_ui(ui, |ui| {
-                                for p in ["mymemory", "ai", "libre", "google"] {
-                                    ui.selectable_value(&mut source.provider, p.to_string(), p);
-                                }
-                            });
-                        ui.add(egui::TextEdit::singleline(&mut source.label).desired_width(120.0).hint_text("Source label"));
-                        ui.label("Timeout (s)");
-                        ui.add(egui::DragValue::new(&mut source.timeout_secs).range(1..=3600));
-                    });
-                    ui.add(egui::TextEdit::singleline(&mut source.proxy_url).desired_width(380.0).hint_text("Proxy URL · direct = bypass · blank = global"));
-                    if source.provider == "ai" {
-                        ui.add(egui::TextEdit::singleline(&mut source.ai_base_url).desired_width(380.0).hint_text("AI base URL (blank = legacy setting)"));
-                        ui.add(egui::TextEdit::singleline(&mut source.ai_model).desired_width(380.0).hint_text("AI model (blank = legacy setting)"));
-                        ui.add(egui::TextEdit::singleline(&mut source.ai_key).password(true).desired_width(380.0).hint_text("AI key (blank = legacy setting)"));
-                    } else if source.provider == "libre" {
-                        ui.add(egui::TextEdit::singleline(&mut source.libre_url).desired_width(380.0).hint_text("Libre URL (blank = legacy setting)"));
-                        ui.add(egui::TextEdit::singleline(&mut source.libre_key).password(true).desired_width(380.0).hint_text("Libre key (blank = legacy setting)"));
-                    }
-                }
-                if let Some((from, to)) = move_source {
-                    self.cfg.sources.swap(from, to);
-                }
-                if let Some(index) = remove_source {
-                    self.cfg.sources.remove(index);
-                }
-                if ui.button("Add source").clicked() {
-                    self.cfg.sources.push(SourceConfig::default());
-                }
 
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {

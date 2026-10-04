@@ -33,7 +33,7 @@ pub async fn run() -> Result<()> {
     let shortcuts = [
         Sc {
             id: "translate_selection",
-            friendly: "Translate selected or copied text",
+            friendly: "Translate the selected text",
             candidates: vec![
                 cand(META, 'E', "Meta+E"),
                 cand(CTRL | ALT, 'E', "Ctrl+Alt+E"),
@@ -63,9 +63,7 @@ pub async fn run() -> Result<()> {
         },
     ];
 
-    let conn = Connection::session()
-        .await
-        .context("connect to session bus")?;
+    let conn = Connection::session().await.context("connect to session bus")?;
     let kga = Proxy::new(
         &conn,
         "org.kde.kglobalaccel",
@@ -112,24 +110,24 @@ pub async fn run() -> Result<()> {
     // KGlobalAccel only holds the actual KWin key grab while the registering
     // owner stays connected — drop it and *real* key presses stop reaching us
     // (invokeShortcut still works, which is what misled earlier testing).
-    // Shortcut signals are caught by the busctl monitor (avoids zbus's
+    // Presses themselves are caught by the busctl monitor (avoids zbus's
     // tokio-executor signal-path quirks); this connection just holds the grab.
-    eprintln!("[kde] listening for global shortcut events…");
+    eprintln!("[kde] listening for global shortcut presses…");
     let _keepalive = (conn, kga);
     tokio::task::spawn_blocking(listen_loop)
         .await
         .context("listener thread")?
 }
 
-/// Wait until selection's shortcut key is released before trying Ctrl+C.
-/// Other actions keep their press-time behavior.
+/// Parse `busctl monitor` output for `globalShortcutPressed` signals and spawn
+/// the matching action. Pure std (no zbus on the hot path).
 fn listen_loop() -> Result<()> {
     let mut child = Command::new("busctl")
         .args([
             "--user",
             "monitor",
             "--match",
-            "type='signal',interface='org.kde.kglobalaccel.Component'",
+            "type='signal',interface='org.kde.kglobalaccel.Component',member='globalShortcutPressed'",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -137,17 +135,16 @@ fn listen_loop() -> Result<()> {
         .context("spawn busctl monitor")?;
 
     let stdout = child.stdout.take().context("busctl stdout")?;
-    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("ai-translate"));
+    let exe =
+        std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("ai-translate"));
 
     let mut capturing = false;
-    let mut released = false;
     let mut strings: Vec<String> = Vec::new();
 
     for line in BufReader::new(stdout).lines() {
         let line = line.context("read busctl output")?;
-        if line.contains("globalShortcutPressed") || line.contains("globalShortcutReleased") {
+        if line.contains("globalShortcutPressed") {
             capturing = true;
-            released = line.contains("globalShortcutReleased");
             strings.clear();
             continue;
         }
@@ -167,18 +164,12 @@ fn listen_loop() -> Result<()> {
             if component != COMPONENT {
                 continue;
             }
-            if !should_dispatch(action_id, released) {
-                continue;
-            }
             let action = match action_id.as_str() {
                 "translate_selection" => "selection",
                 "translate_ocr" => "ocr",
                 _ => "popup",
             };
-            eprintln!(
-                "[kde] {} {action_id} -> spawning {action}",
-                if released { "released" } else { "pressed" }
-            );
+            eprintln!("[kde] pressed {action_id} -> spawning {action}");
             match Command::new(&exe).arg(action).spawn() {
                 // Reap on a detached thread so closed windows don't become zombies.
                 Ok(mut c) => {
@@ -193,23 +184,6 @@ fn listen_loop() -> Result<()> {
 
     let _ = child.wait();
     anyhow::bail!("busctl monitor exited; restarting daemon");
-}
-
-fn should_dispatch(action_id: &str, released: bool) -> bool {
-    (action_id == "translate_selection") == released
-}
-
-#[cfg(test)]
-mod tests {
-    use super::should_dispatch;
-
-    #[test]
-    fn selection_waits_for_release_but_other_actions_use_press() {
-        assert!(!should_dispatch("translate_selection", false));
-        assert!(should_dispatch("translate_selection", true));
-        assert!(should_dispatch("translate_ocr", false));
-        assert!(!should_dispatch("translate_ocr", true));
-    }
 }
 
 fn extract_quoted(line: &str) -> Option<String> {

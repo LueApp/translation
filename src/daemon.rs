@@ -31,7 +31,7 @@ async fn portal_run() -> Result<()> {
     eprintln!("[daemon] session created; binding shortcuts…");
 
     let shortcuts = [
-        NewShortcut::new("translate_selection", "Translate selected or copied text")
+        NewShortcut::new("translate_selection", "Translate the selected text")
             .preferred_trigger("CTRL+ALT+S"),
         NewShortcut::new("translate_ocr", "Capture a screen region, OCR and translate")
             .preferred_trigger("CTRL+ALT+O"),

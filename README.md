@@ -1,6 +1,6 @@
 # AI Translate
 
-A native, lightweight translation tool for Ubuntu/KDE — translate **selected or copied text**,
+A native, lightweight translation tool for Ubuntu/KDE — translate the **selection**,
 a **screen region (OCR)**, or **typed text**, via a global hotkey, with a free
 default engine and optional AI-model backends for much better quality.
 
@@ -10,17 +10,9 @@ Built in Rust (egui GUI — no webkit), tested on **Ubuntu 26.04 / KDE Plasma 6 
 
 | Action | Hotkey | What it does |
 |---|---|---|
-| Translate selection | **Meta+S** | Reads PRIMARY selection in ordinary apps; tries Ctrl+C in WeChat and Chrome, then uses the clipboard; shows the translation **at the mouse cursor** and **copies it to the clipboard** |
+| Translate selection | **Meta+S** | Reads the highlighted text (copy-free on KDE Wayland), translates it, shows the result in a window **at the mouse cursor**, and **copies it to the clipboard** |
 | Capture & OCR | **Ctrl+Alt+R** | Drag a screen region → Tesseract OCR → translate → result window at cursor + clipboard |
 | Popup | **Meta+Shift+T** | Opens a type/paste window at the cursor |
-
-Select text and press **Meta+S** in any app. Ordinary apps use the copy-free
-PRIMARY selection. WeChat and Chrome (including Chrome-hosted Codex) get an
-automatic Ctrl+C attempt; if the app ignores it, the shortcut translates the
-existing clipboard text, which may be from an earlier copy. The first Wayland
-attempt may ask for KDE keyboard-control permission. Because KWin identifies the
-active Chrome window rather than its tab, this fallback applies to all Chrome
-tabs. `ai-translate clipboard` always reads the clipboard explicitly.
 
 **Window placement on Wayland:** a background daemon's window can't self-position
 or auto-raise on Wayland. Two KDE mechanisms make it work: a **KWin window rule**
@@ -54,44 +46,6 @@ Configured in `~/.config/ai-translate/config.toml` (`provider = …`):
 - `google` — free Google endpoint. **Blocked behind the GFW** — only works if you
   set `proxy_url` (see below) to route through a VPN/proxy.
 
-### Ordered fallback sources
-
-Add sources in the popup's **⚙ Settings** panel, or edit `config.toml` directly.
-Sources are tried in list order. A failed or timed-out source moves to the next;
-the popup shows the successful source label, and `ai-translate text` writes it to
-stderr while keeping stdout as translation text. The timeout is in seconds for
-the whole source attempt, including all chunks of long text.
-
-```toml
-[[sources]]
-provider = "ai"
-label = "DeepSeek primary"
-timeout_secs = 12
-proxy_url = "direct"  # bypass a proxy that cannot reach this endpoint
-ai_base_url = "https://api.deepseek.com/v1"
-ai_model = "deepseek-chat"
-ai_key = "sk-..."
-
-[[sources]]
-provider = "ai"
-label = "Backup model"
-timeout_secs = 8
-ai_base_url = "https://example.com/v1"
-ai_model = "backup-model"
-ai_key = "sk-..."
-
-[[sources]]
-provider = "mymemory"
-label = "Free fallback"
-timeout_secs = 10
-```
-
-Each AI or LibreTranslate entry may have its own URL, model, and key. Blank fields
-inherit the existing single-provider settings. When `sources` is absent or empty,
-the old `provider` setting works as before. Set `timeout_secs` above zero.
-Each source can also set `proxy_url`: blank inherits the global proxy, `direct`
-disables proxies, and a URL uses that proxy for this source.
-
 ### Proxy (for blocked endpoints)
 
 To reach providers blocked on your network (e.g. Google), set a proxy that all
@@ -109,8 +63,7 @@ backends route through. Three ways, in precedence order:
    daemon (a systemd user service) won't see vars you only `export` in a shell,
    so prefer #1 or #2 for the global-hotkey triggers.
 
-Set `proxy_url = "direct"` to bypass all proxies. Leave it empty (`""`) to
-use proxy settings from the environment.
+Leave `proxy_url` empty (`""`) for a direct connection.
 
 ### Settings panel
 
@@ -141,8 +94,8 @@ Common presets (base_url / model):
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
 
 `source_lang = "auto"` auto-detects; if the text is already in `target_lang`
-it flips to English (so selection translation always does something useful).
-With the AI backend, entering, selecting, or copying a single word produces
+it flips to English (so selection-translate always does something useful).
+With the AI backend, entering or selecting a single word automatically produces
 a concise dictionary-style entry containing its pronunciation and commonly used
 meanings, grouped by part of speech and ordered by frequency. Longer text is
 translated normally.
@@ -161,8 +114,7 @@ then set `ocr_langs = "eng+chi_sim"` in the config.
 
 ```bash
 ai-translate                 # popup (default)
-ai-translate selection       # PRIMARY, except clipboard in WeChat/Chrome
-ai-translate clipboard       # always translate current clipboard
+ai-translate selection       # translate current selection
 ai-translate ocr             # capture region, OCR, translate
 ai-translate text "hello"    # translate to stdout (no GUI)
 ai-translate daemon          # the hotkey daemon (run by systemd)
@@ -179,10 +131,6 @@ systemctl --user restart app-io.github.lue.AiTranslate.service
 ```
 
 ## Build & install from source
-
-The automatic copy attempt needs `xdotool` and `xprop` for X11 apps, or
-`xdg-desktop-portal-kde` for native Wayland apps. KDE may ask for keyboard-control
-permission the first time. If copying fails, the existing clipboard text is used.
 
 ```bash
 cargo build --release
