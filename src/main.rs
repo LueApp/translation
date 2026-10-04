@@ -21,7 +21,7 @@ struct Cli {
 enum Cmd {
     /// Open an empty popup to type text (default)
     Popup,
-    /// Translate PRIMARY selection, or clipboard in WeChat and Chrome
+    /// Translate PRIMARY selection, with automatic copy fallback in WeChat and Chrome
     Selection,
     /// Translate copied text from the regular clipboard
     Clipboard,
@@ -43,7 +43,7 @@ fn main() -> Result<()> {
         Cmd::Selection => {
             let captured = match focus::capture_route() {
                 Ok(focus::CaptureRoute::Primary) => capture::read_primary(),
-                Ok(focus::CaptureRoute::Clipboard) => capture::read_clipboard(),
+                Ok(focus::CaptureRoute::Clipboard) => capture::copy_or_existing_clipboard(),
                 Err(error) => Err(anyhow::anyhow!(
                     "Could not identify the focused app: {error:#}. Copy text and use the clipboard command."
                 )),

@@ -10,15 +10,16 @@ Built in Rust (egui GUI — no webkit), tested on **Ubuntu 26.04 / KDE Plasma 6 
 
 | Action | Hotkey | What it does |
 |---|---|---|
-| Translate selection | **Meta+S** | Reads PRIMARY selection in ordinary apps; reads the clipboard in WeChat and Chrome; shows the translation **at the mouse cursor** and **copies it to the clipboard** |
+| Translate selection | **Meta+S** | Reads PRIMARY selection in ordinary apps; tries Ctrl+C in WeChat and Chrome, then uses the clipboard; shows the translation **at the mouse cursor** and **copies it to the clipboard** |
 | Capture & OCR | **Ctrl+Alt+R** | Drag a screen region → Tesseract OCR → translate → result window at cursor + clipboard |
 | Popup | **Meta+Shift+T** | Opens a type/paste window at the cursor |
 
-In WeChat and Chrome (including Chrome-hosted Codex), select text, press
-**Ctrl+C**, then **Meta+S**. These windows use the regular clipboard; the
-shortcut does not send Ctrl+C for you. Other apps keep the copy-free PRIMARY
-selection path: select text, then press **Meta+S**. Because KWin identifies the
-active Chrome window rather than its tab, clipboard mode applies to all Chrome
+Select text and press **Meta+S** in any app. Ordinary apps use the copy-free
+PRIMARY selection. WeChat and Chrome (including Chrome-hosted Codex) get an
+automatic Ctrl+C attempt; if the app ignores it, the shortcut translates the
+existing clipboard text, which may be from an earlier copy. The first Wayland
+attempt may ask for KDE keyboard-control permission. Because KWin identifies the
+active Chrome window rather than its tab, this fallback applies to all Chrome
 tabs. `ai-translate clipboard` always reads the clipboard explicitly.
 
 **Window placement on Wayland:** a background daemon's window can't self-position
@@ -178,6 +179,10 @@ systemctl --user restart app-io.github.lue.AiTranslate.service
 ```
 
 ## Build & install from source
+
+The automatic copy attempt needs `xdotool` and `xprop` for X11 apps, or
+`xdg-desktop-portal-kde` for native Wayland apps. KDE may ask for keyboard-control
+permission the first time. If copying fails, the existing clipboard text is used.
 
 ```bash
 cargo build --release

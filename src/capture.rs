@@ -1,9 +1,16 @@
+use crate::config::Config;
 use anyhow::{Context, Result, anyhow, bail};
+use ashpd::desktop::{
+    PersistMode,
+    remote_desktop::{DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions},
+};
 use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const WL_COPY_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
+const COPY_SETTLE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Read the live PRIMARY selection when the focused app publishes one.
 pub fn read_primary() -> Result<String> {
@@ -41,6 +48,187 @@ fn read_clipboard_with(mut read: impl FnMut(&str, &[&str]) -> Result<String>) ->
         }
     }
     bail!("Clipboard has no text. Press Ctrl+C in the source app, then try again.")
+}
+
+/// Best-effort Ctrl+C for input fields that do not publish PRIMARY. If the
+/// focused app ignores the key, translate the existing clipboard as requested.
+pub fn copy_or_existing_clipboard() -> Result<String> {
+    // Klipper's D-Bus read does not map a Wayland surface and take focus away
+    // from the input field before we try to copy its selection.
+    let previous = read_klipper_clipboard()
+        .ok()
+        .filter(|text| !text.trim().is_empty())
+        .or_else(|| read_clipboard().ok());
+    let x11 = focused_window_is_x11();
+    std::thread::sleep(Duration::from_millis(100));
+    let attempted = if x11 {
+        copy_via_x11()
+    } else {
+        copy_via_wayland()
+    };
+    if let Err(error) = &attempted {
+        eprintln!("[capture] automatic copy unavailable; using clipboard: {error:#}");
+    }
+
+    let observed = clipboard_after_attempt(previous.as_deref(), COPY_SETTLE_TIMEOUT, || {
+        read_klipper_clipboard()
+            .and_then(|text| {
+                if text.trim().is_empty() {
+                    bail!("Klipper clipboard is empty");
+                }
+                Ok(text)
+            })
+            .or_else(|_| read_clipboard())
+    })
+    .ok();
+    let direct = if observed.is_none() || observed.as_deref() == previous.as_deref() {
+        read_clipboard().ok()
+    } else {
+        None
+    };
+    let text = direct
+        .filter(|text| !text.trim().is_empty() && previous.as_deref() != Some(text.as_str()))
+        .or(observed)
+        .or(previous.clone())
+        .context("clipboard has no text")?;
+    if previous.as_deref() == Some(text.as_str()) {
+        eprintln!("[capture] copy made no observable change; using existing clipboard text");
+    }
+    Ok(text)
+}
+
+fn copy_via_x11() -> Result<()> {
+    let status = Command::new("xdotool")
+        .args(["key", "--clearmodifiers", "ctrl+c"])
+        .status()
+        .context("sending Ctrl+C to X11 app")?;
+    if !status.success() {
+        bail!("xdotool could not send Ctrl+C");
+    }
+    Ok(())
+}
+
+fn copy_via_wayland() -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            tokio::time::timeout(Duration::from_secs(8), copy_via_remote_desktop())
+                .await
+                .context("keyboard-control permission timed out")?
+        })
+}
+
+fn clipboard_after_attempt(
+    previous: Option<&str>,
+    timeout: Duration,
+    mut read: impl FnMut() -> Result<String>,
+) -> Result<String> {
+    let deadline = Instant::now() + timeout;
+    let mut latest = None;
+    loop {
+        if let Ok(text) = read() {
+            if !text.trim().is_empty() {
+                if Some(text.as_str()) != previous {
+                    return Ok(text);
+                }
+                latest = Some(text);
+            }
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    latest
+        .or_else(|| previous.map(str::to_string))
+        .context("clipboard has no text")
+}
+
+fn read_klipper_clipboard() -> Result<String> {
+    let output = run(
+        "busctl",
+        &[
+            "--json=short",
+            "--user",
+            "--timeout=2s",
+            "call",
+            "org.kde.klipper",
+            "/klipper",
+            "org.kde.klipper.klipper",
+            "getClipboardContents",
+        ],
+    )?;
+    let response: serde_json::Value = serde_json::from_str(&output)?;
+    response
+        .pointer("/data/0")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .context("Klipper returned no text")
+}
+
+fn focused_window_is_x11() -> bool {
+    let Ok(window) = run("xdotool", &["getactivewindow"]) else {
+        return false;
+    };
+    run("xprop", &["-id", window.trim(), "WM_CLASS"])
+        .is_ok_and(|info| info.contains("WM_CLASS(STRING)"))
+}
+
+async fn copy_via_remote_desktop() -> Result<()> {
+    let portal = RemoteDesktop::new()
+        .await
+        .context("Wayland keyboard-control portal is unavailable")?;
+    let session = portal.create_session(Default::default()).await?;
+    let token_path = Config::dir()?.join("remote-desktop-token");
+    let token = std::fs::read_to_string(&token_path).ok();
+    let options = SelectDevicesOptions::default()
+        .set_devices(Some(DeviceType::Keyboard.into()))
+        .set_persist_mode(PersistMode::ExplicitlyRevoked)
+        .set_restore_token(token.as_deref().map(str::trim));
+    portal.select_devices(&session, options).await?.response()?;
+    let response = portal
+        .start(&session, None, Default::default())
+        .await?
+        .response()?;
+    if !response.devices().contains(DeviceType::Keyboard) {
+        bail!("keyboard-control permission was not granted");
+    }
+    if let Some(token) = response.restore_token() {
+        save_remote_desktop_token(&token_path, token)?;
+    }
+    std::thread::sleep(Duration::from_millis(150));
+    portal
+        .notify_keyboard_keycode(&session, 29, KeyState::Pressed, Default::default())
+        .await?;
+    let press_c = portal
+        .notify_keyboard_keycode(&session, 46, KeyState::Pressed, Default::default())
+        .await;
+    let release_c = portal
+        .notify_keyboard_keycode(&session, 46, KeyState::Released, Default::default())
+        .await;
+    let release_ctrl = portal
+        .notify_keyboard_keycode(&session, 29, KeyState::Released, Default::default())
+        .await;
+    press_c?;
+    release_c?;
+    release_ctrl?;
+    std::thread::sleep(Duration::from_millis(100));
+    Ok(())
+}
+
+fn save_remote_desktop_token(path: &std::path::Path, token: &str) -> Result<()> {
+    let dir = path.parent().context("remote-desktop token directory")?;
+    std::fs::create_dir_all(dir)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    file.write_all(token.as_bytes())?;
+    Ok(())
 }
 
 /// Show a desktop notification (reliable on Wayland/KDE from a background daemon,
@@ -187,6 +375,24 @@ fn run(cmd: &str, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_fallback_uses_existing_clipboard_when_no_new_text_arrives() {
+        let text = clipboard_after_attempt(Some("previous copy"), Duration::ZERO, || {
+            Err(anyhow!("clipboard read failed"))
+        })
+        .unwrap();
+        assert_eq!(text, "previous copy");
+    }
+
+    #[test]
+    fn copy_fallback_prefers_fresh_clipboard_text() {
+        let text = clipboard_after_attempt(Some("previous copy"), Duration::ZERO, || {
+            Ok("selected text".into())
+        })
+        .unwrap();
+        assert_eq!(text, "selected text");
+    }
 
     #[test]
     fn primary_capture_does_not_read_regular_clipboard() {
