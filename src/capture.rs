@@ -5,6 +5,25 @@ use std::time::{Duration, Instant};
 
 const WL_COPY_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Read the live PRIMARY selection when the focused app publishes one.
+pub fn read_primary() -> Result<String> {
+    read_primary_with(run)
+}
+
+fn read_primary_with(mut read: impl FnMut(&str, &[&str]) -> Result<String>) -> Result<String> {
+    for (cmd, args) in [
+        ("wl-paste", &["--primary", "--no-newline"][..]),
+        ("xclip", &["-selection", "primary", "-o"][..]),
+    ] {
+        if let Ok(text) = read(cmd, args) {
+            if !text.trim().is_empty() {
+                return Ok(text);
+            }
+        }
+    }
+    bail!("No selected text available. Copy it with Ctrl+C and use clipboard translation.")
+}
+
 /// Read text the user has already copied to the regular clipboard.
 pub fn read_clipboard() -> Result<String> {
     read_clipboard_with(run)
@@ -168,6 +187,27 @@ fn run(cmd: &str, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn primary_capture_does_not_read_regular_clipboard() {
+        let mut calls = Vec::new();
+        let text = read_primary_with(|cmd, args| {
+            calls.push((
+                cmd.to_string(),
+                args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
+            ));
+            if cmd == "xclip" {
+                Ok("selected text".into())
+            } else {
+                Err(anyhow!("no Wayland PRIMARY"))
+            }
+        })
+        .unwrap();
+        assert_eq!(text, "selected text");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].1, ["--primary", "--no-newline"]);
+        assert_eq!(calls[1].1, ["-selection", "primary", "-o"]);
+    }
 
     #[test]
     fn reads_regular_wayland_clipboard_without_primary() {

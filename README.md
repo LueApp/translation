@@ -1,6 +1,6 @@
 # AI Translate
 
-A native, lightweight translation tool for Ubuntu/KDE — translate **copied text**,
+A native, lightweight translation tool for Ubuntu/KDE — translate **selected or copied text**,
 a **screen region (OCR)**, or **typed text**, via a global hotkey, with a free
 default engine and optional AI-model backends for much better quality.
 
@@ -10,14 +10,16 @@ Built in Rust (egui GUI — no webkit), tested on **Ubuntu 26.04 / KDE Plasma 6 
 
 | Action | Hotkey | What it does |
 |---|---|---|
-| Translate clipboard | **Meta+S** | Reads the current clipboard text, translates it, shows the result in a window **at the mouse cursor**, and **copies the translation to the clipboard** |
+| Translate selection | **Meta+S** | Reads PRIMARY selection in ordinary apps; reads the clipboard in WeChat and Chrome; shows the translation **at the mouse cursor** and **copies it to the clipboard** |
 | Capture & OCR | **Ctrl+Alt+R** | Drag a screen region → Tesseract OCR → translate → result window at cursor + clipboard |
 | Popup | **Meta+Shift+T** | Opens a type/paste window at the cursor |
 
-To translate text in Codex, WeChat, or another app, select it, press **Ctrl+C**,
-then press **Meta+S**. The shortcut uses the clipboard contents as they are; it
-does not read the live selection or send Ctrl+C for you. After translation, the
-result replaces the clipboard contents.
+In WeChat and Chrome (including Chrome-hosted Codex), select text, press
+**Ctrl+C**, then **Meta+S**. These windows use the regular clipboard; the
+shortcut does not send Ctrl+C for you. Other apps keep the copy-free PRIMARY
+selection path: select text, then press **Meta+S**. Because KWin identifies the
+active Chrome window rather than its tab, clipboard mode applies to all Chrome
+tabs. `ai-translate clipboard` always reads the clipboard explicitly.
 
 **Window placement on Wayland:** a background daemon's window can't self-position
 or auto-raise on Wayland. Two KDE mechanisms make it work: a **KWin window rule**
@@ -138,8 +140,8 @@ Common presets (base_url / model):
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
 
 `source_lang = "auto"` auto-detects; if the text is already in `target_lang`
-it flips to English (so clipboard translation always does something useful).
-With the AI backend, entering or copying a single word automatically produces
+it flips to English (so selection translation always does something useful).
+With the AI backend, entering, selecting, or copying a single word produces
 a concise dictionary-style entry containing its pronunciation and commonly used
 meanings, grouped by part of speech and ordered by frequency. Longer text is
 translated normally.
@@ -158,8 +160,8 @@ then set `ocr_langs = "eng+chi_sim"` in the config.
 
 ```bash
 ai-translate                 # popup (default)
-ai-translate clipboard       # translate current clipboard
-ai-translate selection       # legacy alias for clipboard
+ai-translate selection       # PRIMARY, except clipboard in WeChat/Chrome
+ai-translate clipboard       # always translate current clipboard
 ai-translate ocr             # capture region, OCR, translate
 ai-translate text "hello"    # translate to stdout (no GUI)
 ai-translate daemon          # the hotkey daemon (run by systemd)

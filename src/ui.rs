@@ -271,7 +271,7 @@ impl eframe::App for TranslatorApp {
                         egui::TextEdit::multiline(&mut self.input)
                             .desired_rows(3)
                             .desired_width(f32::INFINITY)
-                            .hint_text("Type text, or trigger from clipboard / OCR…"),
+                            .hint_text("Type text, or trigger from selection / clipboard / OCR…"),
                     )
                 })
                 .inner;

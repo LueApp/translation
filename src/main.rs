@@ -1,6 +1,7 @@
 mod capture;
 mod config;
 mod daemon;
+mod focus;
 mod kde_shortcuts;
 mod translate;
 mod ui;
@@ -20,8 +21,9 @@ struct Cli {
 enum Cmd {
     /// Open an empty popup to type text (default)
     Popup,
+    /// Translate PRIMARY selection, or clipboard in WeChat and Chrome
+    Selection,
     /// Translate copied text from the regular clipboard
-    #[command(alias = "selection")]
     Clipboard,
     /// Capture a screen region, OCR it, and translate
     Ocr,
@@ -38,6 +40,19 @@ fn main() -> Result<()> {
     let cfg = Config::load()?;
     match cli.cmd.unwrap_or(Cmd::Popup) {
         Cmd::Popup => run_gui(cfg, String::new(), false, false, String::new()),
+        Cmd::Selection => {
+            let captured = match focus::capture_route() {
+                Ok(focus::CaptureRoute::Primary) => capture::read_primary(),
+                Ok(focus::CaptureRoute::Clipboard) => capture::read_clipboard(),
+                Err(error) => Err(anyhow::anyhow!(
+                    "Could not identify the focused app: {error:#}. Copy text and use the clipboard command."
+                )),
+            };
+            match captured {
+                Ok(text) => run_gui(cfg, text, true, true, String::new()),
+                Err(error) => run_gui(cfg, String::new(), false, false, error.to_string()),
+            }
+        }
         Cmd::Clipboard => match capture::read_clipboard() {
             Ok(text) => run_gui(cfg, text, true, true, String::new()),
             Err(error) => run_gui(cfg, String::new(), false, false, error.to_string()),
