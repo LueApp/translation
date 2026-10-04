@@ -5,17 +5,15 @@ use std::time::{Duration, Instant};
 
 const WL_COPY_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Read the current selection. Some apps expose it through Wayland PRIMARY,
-/// while XWayland apps may expose it only through X11 PRIMARY. The regular
-/// clipboard is not a selection and can contain unrelated, older text.
-pub fn read_primary() -> Result<String> {
-    read_primary_with(run)
+/// Read text the user has already copied to the regular clipboard.
+pub fn read_clipboard() -> Result<String> {
+    read_clipboard_with(run)
 }
 
-fn read_primary_with(mut read: impl FnMut(&str, &[&str]) -> Result<String>) -> Result<String> {
+fn read_clipboard_with(mut read: impl FnMut(&str, &[&str]) -> Result<String>) -> Result<String> {
     for (cmd, args) in [
-        ("wl-paste", &["--primary", "--no-newline"][..]),
-        ("xclip", &["-selection", "primary", "-o"][..]),
+        ("wl-paste", &["--no-newline"][..]),
+        ("xclip", &["-selection", "clipboard", "-o"][..]),
     ] {
         if let Ok(s) = read(cmd, args) {
             if !s.trim().is_empty() {
@@ -23,7 +21,7 @@ fn read_primary_with(mut read: impl FnMut(&str, &[&str]) -> Result<String>) -> R
             }
         }
     }
-    bail!("No selected text available. Press Ctrl+C, then paste here.")
+    bail!("Clipboard has no text. Press Ctrl+C in the source app, then try again.")
 }
 
 /// Show a desktop notification (reliable on Wayland/KDE from a background daemon,
@@ -172,42 +170,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn x11_selection_wins_when_wayland_primary_is_unavailable() {
+    fn reads_regular_wayland_clipboard_without_primary() {
         let mut calls = Vec::new();
-        let text = read_primary_with(|cmd, args| {
+        let text = read_clipboard_with(|cmd, args| {
+            calls.push((
+                cmd.to_string(),
+                args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
+            ));
+            Ok("copied text".into())
+        })
+        .unwrap();
+        assert_eq!(text, "copied text");
+        assert_eq!(calls, [("wl-paste".into(), vec!["--no-newline".into()])]);
+    }
+
+    #[test]
+    fn falls_back_to_x11_clipboard_without_primary() {
+        let mut calls = Vec::new();
+        let text = read_clipboard_with(|cmd, args| {
             calls.push((
                 cmd.to_string(),
                 args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
             ));
             if cmd == "xclip" {
-                Ok("selected in XWayland".into())
+                Ok("copied in XWayland".into())
             } else {
-                Err(anyhow!("no Wayland selection"))
+                Err(anyhow!("no Wayland clipboard"))
             }
         })
         .unwrap();
-        assert_eq!(text, "selected in XWayland");
+        assert_eq!(text, "copied in XWayland");
         assert_eq!(calls.len(), 2);
-        assert_eq!(calls[1].0, "xclip");
-        assert_eq!(calls[1].1, ["-selection", "primary", "-o"]);
-    }
-
-    #[test]
-    fn missing_selection_does_not_read_old_clipboard_text() {
-        let mut calls = Vec::new();
-        let error = read_primary_with(|cmd, args| {
-            calls.push((
-                cmd.to_string(),
-                args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
-            ));
-            Err(anyhow!("no selection"))
-        })
-        .unwrap_err();
-        assert!(error.to_string().contains("No selected text"));
-        assert_eq!(calls.len(), 2);
-        assert!(calls.iter().all(|(cmd, args)| {
-            (cmd == "wl-paste" && args.iter().any(|arg| arg == "--primary")) || cmd == "xclip"
-        }));
+        assert_eq!(
+            calls[1],
+            (
+                "xclip".into(),
+                vec!["-selection".into(), "clipboard".into(), "-o".into()]
+            )
+        );
     }
 
     #[test]

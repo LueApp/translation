@@ -33,7 +33,7 @@ pub async fn run() -> Result<()> {
     let shortcuts = [
         Sc {
             id: "translate_selection",
-            friendly: "Translate the selected text",
+            friendly: "Translate copied text",
             candidates: vec![
                 cand(META, 'E', "Meta+E"),
                 cand(CTRL | ALT, 'E', "Ctrl+Alt+E"),
@@ -165,7 +165,7 @@ fn listen_loop() -> Result<()> {
                 continue;
             }
             let action = match action_id.as_str() {
-                "translate_selection" => "selection",
+                "translate_selection" => "clipboard",
                 "translate_ocr" => "ocr",
                 _ => "popup",
             };
