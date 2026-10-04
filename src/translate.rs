@@ -1,12 +1,13 @@
-use crate::config::Config;
-use anyhow::{anyhow, bail, Context, Result};
+use crate::config::{Config, SourceConfig};
+use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const AI_FALLBACK_WARNING: &str = "AI key is empty; used MyMemory fallback.";
 
 pub struct Translation {
     pub text: String,
+    pub source: String,
     pub warning: Option<String>,
 }
 
@@ -15,17 +16,30 @@ pub struct Translation {
 /// bounds connect/total time so an unreachable endpoint fails fast instead of
 /// hanging. `http_status_as_error(false)` lets each backend read 4xx/5xx
 /// bodies and surface the server's own message instead of a bare status code.
-fn http_agent(cfg: &Config) -> Result<ureq::Agent> {
+fn http_agent(cfg: &Config, deadline: Instant, url: &str) -> Result<ureq::Agent> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|duration| !duration.is_zero())
+        .context("source timed out")?;
     let mut builder = ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(8)))
-        .timeout_global(Some(Duration::from_secs(40)))
+        .timeout_connect(Some(remaining.min(Duration::from_secs(8))))
+        .timeout_global(Some(remaining))
         .http_status_as_error(false);
     let proxy = cfg.proxy_url.trim();
-    if !proxy.is_empty() {
+    if proxy.eq_ignore_ascii_case("direct") {
+        builder = builder.proxy(None);
+    } else if !proxy.is_empty() {
         let p = ureq::Proxy::new(proxy).with_context(|| {
             format!("invalid proxy_url '{proxy}' (use http://host:port or socks5://host:port)")
         })?;
         builder = builder.proxy(Some(p));
+    } else if url.starts_with("http://127.0.0.1:")
+        || url.starts_with("http://localhost:")
+        || url.starts_with("https://127.0.0.1:")
+        || url.starts_with("https://localhost:")
+    {
+        // Local API endpoints should stay local even when a shell has a proxy.
+        builder = builder.proxy(None);
     }
     Ok(builder.build().into())
 }
@@ -36,43 +50,118 @@ pub fn translate_with_warning(cfg: &Config, text: &str) -> Result<Translation> {
     if text.is_empty() {
         return Ok(Translation {
             text: String::new(),
+            source: String::new(),
             warning: None,
         });
     }
+    if !cfg.sources.is_empty() {
+        let mut failures = Vec::new();
+        for source in &cfg.sources {
+            let label = source_label(source);
+            if source.timeout_secs == 0 {
+                failures.push(format!("{label}: timeout_secs must be greater than zero"));
+                continue;
+            }
+            let mut attempt = cfg.clone();
+            attempt.provider = source.provider.clone();
+            if !source.proxy_url.trim().is_empty() {
+                attempt.proxy_url = source.proxy_url.clone();
+            }
+            for (target, value) in [
+                (&mut attempt.ai_base_url, &source.ai_base_url),
+                (&mut attempt.ai_model, &source.ai_model),
+                (&mut attempt.ai_key, &source.ai_key),
+                (&mut attempt.libre_url, &source.libre_url),
+                (&mut attempt.libre_key, &source.libre_key),
+            ] {
+                if !value.is_empty() {
+                    *target = value.clone();
+                }
+            }
+            let Some(deadline) =
+                Instant::now().checked_add(Duration::from_secs(source.timeout_secs))
+            else {
+                failures.push(format!("{label}: timeout_secs is too large"));
+                continue;
+            };
+            match translate_one(&attempt, text, deadline) {
+                Ok(translated) if !translated.trim().is_empty() => {
+                    return Ok(Translation {
+                        text: translated,
+                        source: label,
+                        warning: (!failures.is_empty())
+                            .then(|| format!("Earlier sources failed: {}", failures.join("; "))),
+                    });
+                }
+                Ok(_) => failures.push(format!("{label}: empty translation")),
+                Err(error) => failures.push(format!("{label}: {error:#}")),
+            }
+        }
+        bail!("all translation sources failed: {}", failures.join("; "));
+    }
+    let deadline = Instant::now() + Duration::from_secs(40);
     let translated = match cfg.provider.as_str() {
-        "mymemory" => mymemory(cfg, text),
         // AI is the quality backend; until a key is set, fall back to the free
         // engine so the tool always works.
         "ai" if cfg.ai_key.trim().is_empty() => {
-            let text = mymemory(cfg, text).with_context(|| AI_FALLBACK_WARNING)?;
+            let text = mymemory(cfg, text, deadline).with_context(|| AI_FALLBACK_WARNING)?;
             return Ok(Translation {
                 text,
+                source: "MyMemory".into(),
                 warning: Some(AI_FALLBACK_WARNING.to_string()),
             });
         }
-        "ai" => ai_translate(cfg, text),
-        "libre" => libretranslate(cfg, text),
-        "google" => {
-            let agent = http_agent(cfg)?;
-            let (src, tgt) = resolve_langs(cfg, text);
-            google_free(&agent, &src, &tgt, text)
-        }
-        other => bail!("unknown provider '{}'", other),
+        _ => translate_one(cfg, text, deadline),
     }?;
     Ok(Translation {
         text: translated,
+        source: provider_label(&cfg.provider).to_string(),
         warning: None,
     })
 }
 
+fn source_label(source: &SourceConfig) -> String {
+    let label = source.label.trim();
+    if label.is_empty() {
+        provider_label(&source.provider).to_string()
+    } else {
+        label.to_string()
+    }
+}
+
+fn provider_label(provider: &str) -> &str {
+    match provider {
+        "mymemory" => "MyMemory",
+        "ai" => "AI",
+        "libre" => "LibreTranslate",
+        "google" => "Google",
+        other => other,
+    }
+}
+
+fn translate_one(cfg: &Config, text: &str, deadline: Instant) -> Result<String> {
+    match cfg.provider.as_str() {
+        "mymemory" => mymemory(cfg, text, deadline),
+        "ai" => ai_translate(cfg, text, deadline),
+        "libre" => libretranslate(cfg, text, deadline),
+        "google" => {
+            let (src, tgt) = resolve_langs(cfg, text);
+            google_free(cfg, &src, &tgt, text, deadline)
+        }
+        other => bail!("unknown provider '{other}'"),
+    }
+}
+
 // ---------- MyMemory: free, no key (reachable in CN) ----------
 
-fn mymemory(cfg: &Config, text: &str) -> Result<String> {
-    let agent = http_agent(cfg)?;
+fn mymemory(cfg: &Config, text: &str, deadline: Instant) -> Result<String> {
     let (src, tgt) = resolve_langs(cfg, text);
     let langpair = format!("{src}|{tgt}");
     // MyMemory caps each request at 500 bytes — translate long text in chunks.
-    translate_chunked(text, 480, |chunk| mymemory_one(&agent, &langpair, chunk))
+    translate_chunked(text, 480, |chunk| {
+        let agent = http_agent(cfg, deadline, "https://api.mymemory.translated.net/get")?;
+        mymemory_one(&agent, &langpair, chunk)
+    })
 }
 
 fn mymemory_one(agent: &ureq::Agent, langpair: &str, text: &str) -> Result<String> {
@@ -82,7 +171,10 @@ fn mymemory_one(agent: &ureq::Agent, langpair: &str, text: &str) -> Result<Strin
         .query("langpair", langpair)
         .call()
         .context("MyMemory request failed (check network)")?;
-    let v: Value = res.body_mut().read_json().context("reading MyMemory response")?;
+    let v: Value = res
+        .body_mut()
+        .read_json()
+        .context("reading MyMemory response")?;
     let status = v.get("responseStatus").and_then(value_as_i64).unwrap_or(0);
     let translated = v
         .pointer("/responseData/translatedText")
@@ -100,7 +192,7 @@ fn mymemory_one(agent: &ureq::Agent, langpair: &str, text: &str) -> Result<Strin
 
 // ---------- AI: OpenAI-compatible chat (DeepSeek/Kimi/GLM/Qwen/Doubao/OpenAI) ----------
 
-fn ai_translate(cfg: &Config, text: &str) -> Result<String> {
+fn ai_translate(cfg: &Config, text: &str, deadline: Instant) -> Result<String> {
     if cfg.ai_key.trim().is_empty() {
         bail!("no AI key set — put your key in ai_key (see `ai-translate config-path`)");
     }
@@ -119,7 +211,7 @@ fn ai_translate(cfg: &Config, text: &str) -> Result<String> {
         "stream": false,
     });
     let auth = format!("Bearer {}", cfg.ai_key.trim());
-    let agent = http_agent(cfg)?;
+    let agent = http_agent(cfg, deadline, &url)?;
     let mut res = agent
         .post(&url)
         .header("Authorization", &auth)
@@ -127,7 +219,10 @@ fn ai_translate(cfg: &Config, text: &str) -> Result<String> {
         .send_json(&body)
         .with_context(|| format!("AI request to {url} failed"))?;
     let v: Value = res.body_mut().read_json().context("reading AI response")?;
-    match v.pointer("/choices/0/message/content").and_then(|x| x.as_str()) {
+    match v
+        .pointer("/choices/0/message/content")
+        .and_then(|x| x.as_str())
+    {
         Some(content) => Ok(content.trim().to_string()),
         // Surface the provider's own error (bad key, unknown model, …) clearly.
         None => match v.pointer("/error/message").and_then(|x| x.as_str()) {
@@ -225,7 +320,7 @@ fn is_han(c: char) -> bool {
 
 // ---------- LibreTranslate (self-hostable; public instance needs a key) ----------
 
-fn libretranslate(cfg: &Config, text: &str) -> Result<String> {
+fn libretranslate(cfg: &Config, text: &str, deadline: Instant) -> Result<String> {
     let url = format!("{}/translate", cfg.libre_url.trim_end_matches('/'));
     let (src, tgt) = resolve_langs(cfg, text);
     let mut body = serde_json::json!({
@@ -237,7 +332,7 @@ fn libretranslate(cfg: &Config, text: &str) -> Result<String> {
     if !cfg.libre_key.is_empty() {
         body["api_key"] = Value::String(cfg.libre_key.clone());
     }
-    let agent = http_agent(cfg)?;
+    let agent = http_agent(cfg, deadline, &url)?;
     let mut res = agent
         .post(&url)
         .send_json(&body)
@@ -254,9 +349,16 @@ fn libretranslate(cfg: &Config, text: &str) -> Result<String> {
 
 // ---------- Google unofficial (free, blocked behind the GFW) ----------
 
-fn google_free(agent: &ureq::Agent, sl: &str, tl: &str, text: &str) -> Result<String> {
+fn google_free(cfg: &Config, sl: &str, tl: &str, text: &str, deadline: Instant) -> Result<String> {
     // Keep each GET request's URL within bounds.
-    translate_chunked(text, 1500, |chunk| google_one(agent, sl, tl, chunk))
+    translate_chunked(text, 1500, |chunk| {
+        let agent = http_agent(
+            cfg,
+            deadline,
+            "https://translate.googleapis.com/translate_a/single",
+        )?;
+        google_one(&agent, sl, tl, chunk)
+    })
 }
 
 fn google_one(agent: &ureq::Agent, sl: &str, tl: &str, text: &str) -> Result<String> {
@@ -272,7 +374,10 @@ fn google_one(agent: &ureq::Agent, sl: &str, tl: &str, text: &str) -> Result<Str
             "Google translate request failed — it's blocked on this network. \
              Set `proxy_url` in config (e.g. http://127.0.0.1:7890) to route through a VPN/proxy.",
         )?;
-    let body = res.body_mut().read_to_string().context("reading Google response")?;
+    let body = res
+        .body_mut()
+        .read_to_string()
+        .context("reading Google response")?;
     let v: Value = serde_json::from_str(&body).context("parsing Google JSON")?;
     let segments = v
         .get(0)
@@ -364,7 +469,8 @@ fn lang_name(code: &str) -> String {
 }
 
 fn value_as_i64(v: &Value) -> Option<i64> {
-    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
 // ---------- chunking (for length-limited backends like MyMemory / Google) ----------
@@ -455,6 +561,114 @@ fn hard_split(s: &str, max_bytes: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn test_ai_server(body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0; 4096];
+            loop {
+                let size = stream.read(&mut buf).unwrap();
+                if size == 0 {
+                    return;
+                }
+                request.extend_from_slice(&buf[..size]);
+                if let Some(header_end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|value| value.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= header_end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        format!("http://{addr}/v1")
+    }
+
+    fn ai_source(label: &str, url: String) -> SourceConfig {
+        SourceConfig {
+            provider: "ai".into(),
+            label: label.into(),
+            timeout_secs: 2,
+            ai_base_url: url,
+            ai_model: "test".into(),
+            ai_key: "test-key".into(),
+            ..SourceConfig::default()
+        }
+    }
+
+    #[test]
+    fn timed_out_source_uses_next_source() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            std::thread::sleep(Duration::from_secs(2));
+        });
+        let second = test_ai_server(r#"{"choices":[{"message":{"content":"bonjour"}}]}"#);
+        let mut first = ai_source("Slow", format!("http://{addr}/v1"));
+        first.timeout_secs = 1;
+        let mut cfg = Config::default();
+        cfg.sources = vec![first, ai_source("Backup", second)];
+        let result = translate_with_warning(&cfg, "hello").unwrap();
+        assert_eq!(result.source, "Backup");
+        assert_eq!(result.text, "bonjour");
+    }
+
+    #[test]
+    fn falls_back_in_order_and_reports_winning_source() {
+        let first = test_ai_server(r#"{"error":{"message":"unavailable"}}"#);
+        let second = test_ai_server(r#"{"choices":[{"message":{"content":"bonjour"}}]}"#);
+        let mut cfg = Config::default();
+        cfg.sources = vec![ai_source("Primary", first), ai_source("Backup", second)];
+        let result = translate_with_warning(&cfg, "hello").unwrap();
+        assert_eq!(result.text, "bonjour");
+        assert_eq!(result.source, "Backup");
+        assert!(result.warning.unwrap().contains("Primary"));
+    }
+
+    #[test]
+    fn skips_invalid_timeout_and_keeps_source_order() {
+        let second = test_ai_server(r#"{"choices":[{"message":{"content":"bonjour"}}]}"#);
+        let mut cfg = Config::default();
+        let mut first = SourceConfig::default();
+        first.label = "Invalid".into();
+        first.timeout_secs = 0;
+        cfg.sources = vec![first, ai_source("Backup", second)];
+        let result = translate_with_warning(&cfg, "hello").unwrap();
+        assert_eq!(result.source, "Backup");
+        assert!(result.warning.unwrap().contains("timeout_secs"));
+    }
+
+    #[test]
+    fn source_can_bypass_global_proxy() {
+        let url = test_ai_server(r#"{"choices":[{"message":{"content":"bonjour"}}]}"#);
+        let mut cfg = Config::default();
+        cfg.proxy_url = "not a proxy URL".into();
+        let mut source = ai_source("Direct", url);
+        source.proxy_url = "direct".into();
+        cfg.sources.push(source);
+        let result = translate_with_warning(&cfg, "hello").unwrap();
+        assert_eq!(result.text, "bonjour");
+        assert_eq!(result.source, "Direct");
+    }
 
     #[test]
     fn recognizes_single_word_lookups() {
