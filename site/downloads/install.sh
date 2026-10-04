@@ -154,14 +154,13 @@ fi
 echo
 say "Optional runtime tools (install once, with apt)"
 cat <<DEPS
-  Selection read / clipboard : wl-clipboard (wl-paste, wl-copy) + xclip and xdotool (X11)
-  Wayland selection copy     : xdg-desktop-portal-kde (keyboard-control permission)
+  Selection read / clipboard : wl-clipboard   (wl-paste, wl-copy)   + xclip (X11)
   Region capture for OCR     : kde-spectacle  (Spectacle)
   OCR engine                 : tesseract-ocr  (+ language packs)
   Desktop notifications      : libnotify-bin  (notify-send)
   Window-at-cursor placement : qdbus-qt6      (provides /usr/bin/qdbus6; ships with KDE Plasma)
 
-  sudo apt install wl-clipboard xclip xdotool kde-spectacle tesseract-ocr libnotify-bin qdbus-qt6 xdg-desktop-portal-kde
+  sudo apt install wl-clipboard xclip kde-spectacle tesseract-ocr libnotify-bin qdbus-qt6
   # extra OCR languages, e.g.:  sudo apt install tesseract-ocr-chi-sim tesseract-ocr-jpn
 DEPS
 

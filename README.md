@@ -10,15 +10,15 @@ Built in Rust (egui GUI — no webkit), tested on **Ubuntu 26.04 / KDE Plasma 6 
 
 | Action | Hotkey | What it does |
 |---|---|---|
-| Translate selection | **Meta+S** | Copies highlighted text from the focused app, translates it, shows the result in a window **at the mouse cursor**, and **copies it to the clipboard** |
+| Translate selection | **Meta+S** | Reads the highlighted text (copy-free on KDE Wayland), translates it, shows the result in a window **at the mouse cursor**, and **copies it to the clipboard** |
 | Capture & OCR | **Ctrl+Alt+R** | Drag a screen region → Tesseract OCR → translate → result window at cursor + clipboard |
 | Popup | **Meta+Shift+T** | Opens a type/paste window at the cursor |
 
-The selection shortcut sends Ctrl+C to the focused app and reads the fresh copy,
-which also works for input fields that do not publish their highlight as PRIMARY.
-For native Wayland apps, KDE may request keyboard-control permission on first use;
-approve it once to let the shortcut copy selections. If capture fails, the popup
-shows a message instead of translating an older clipboard entry.
+Some input fields (including some Codex and WeChat fields) do not publish their
+highlighted text as a desktop PRIMARY selection. In those fields, the selection
+shortcut opens the popup with a capture message instead of translating an old
+clipboard entry. Copy the highlighted text with **Ctrl+C**, then paste it into
+the popup to translate it.
 
 **Window placement on Wayland:** a background daemon's window can't self-position
 or auto-raise on Wayland. Two KDE mechanisms make it work: a **KWin window rule**
